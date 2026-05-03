@@ -27,11 +27,16 @@ class ChatIdLoggingMiddleware(BaseMiddleware):
     ) -> Any:
         if isinstance(event, Message):
             logger.info(
-                "message update: chat_id=%s chat_type=%s chat_title=%r from_user_id=%s",
+                (
+                    "message update: chat_id=%s chat_type=%s chat_title=%r "
+                    "from_user_id=%s sender_chat_id=%s is_automatic_forward=%s"
+                ),
                 event.chat.id,
                 event.chat.type,
                 event.chat.title,
                 event.from_user.id if event.from_user else None,
+                event.sender_chat.id if event.sender_chat else None,
+                event.is_automatic_forward,
             )
             if event.from_user is not None:
                 await self.db.upsert_seen_user(
@@ -101,6 +106,9 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
     @router.message(F.chat.id.in_(settings.moderated_chat_id_set))
     async def moderated_chat_message(message: Message) -> None:
+        if message.sender_chat is not None or message.is_automatic_forward:
+            return
+
         if message.from_user is None:
             return
 
