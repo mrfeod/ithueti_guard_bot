@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    image: ithueti-guard-bot:local
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /state/guard_bot.sqlite3
+    user: "${UID:-501}:${GID:-20}"
+    volumes:
+      - ./state:/state
+    restart: unless-stopped
