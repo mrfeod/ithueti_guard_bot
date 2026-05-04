@@ -15,9 +15,11 @@ Telegram-бот для модерации чата комментариев ка
 - Пользователь может написать `UNBAN_PHRASE`, чтобы бот снял сохраненный бан и зарегистрировал его.
 - Прочие личные сообщения и медиа пересылаются админам.
 - Админка в личке включается фразой `ADMIN_SECRET`.
-- Админу доступны `/help`, `/status @username`, `/ban @username`, `/remove @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/ignore @username`, `/unignore @username`.
+- Админу доступны `/help`, `/status @username`, `/ban @username`, `/remove @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/mod @username`, `/demod @username`, `/modlist`, `/ignore @username`, `/unignore @username`.
 - `/remove @username` банит пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`.
 - `/unban @username` разбанивает пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`, затем регистрирует его.
+- `/mod @username` выдаёт пользователю права модератора, `/demod @username` снимает их, `/modlist` показывает список.
+- Модератор не видит админское меню, но может в модерируемом чате использовать `ban`, `remove` и `unban`.
 - Админские команды можно писать с username или ответом на сообщение пользователя. Reply-режим работает в чате и в личке бота на пересланных админу сообщениях.
 - Пользователей из ignore-списка бот не пересылает админам в личке.
 
@@ -81,4 +83,4 @@ state/guard_bot.sqlite3
 
 `docker-compose.yml` монтирует эту директорию в контейнер как `/state`, поэтому для Docker-запуска `DATABASE_PATH` должен указывать на файл внутри `/state`.
 
-Директория `state/` добавлена в `.gitignore`. Если удалить `state`, бот потеряет зарегистрированных пользователей, сохраненные баны, список админов, ignore-список и активные challenge-проверки.
+Директория `state/` добавлена в `.gitignore`. Если удалить `state`, бот потеряет зарегистрированных пользователей, сохраненные баны, список админов, список модераторов, ignore-список и активные challenge-проверки.

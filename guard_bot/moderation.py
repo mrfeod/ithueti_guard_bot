@@ -26,6 +26,9 @@ class ModerationService:
         self.settings = settings
 
     async def is_registered(self, chat_id: int, user_id: int) -> bool:
+        if await self.db.is_admin(user_id) or await self.db.is_moderator(user_id):
+            return True
+
         if await self.db.is_registered(user_id):
             return True
 

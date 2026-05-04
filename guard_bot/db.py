@@ -70,6 +70,12 @@ class Database:
                 added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS bot_moderators (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS admin_message_links (
                 admin_id INTEGER NOT NULL,
                 admin_message_id INTEGER NOT NULL,
@@ -289,6 +295,46 @@ class Database:
         cursor = await self.conn.execute("SELECT user_id FROM bot_admins")
         rows = await cursor.fetchall()
         return [int(row["user_id"]) for row in rows]
+
+    async def add_moderator(self, user_id: int, username: str | None) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO bot_moderators (user_id, username)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                added_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, username),
+        )
+        await self.conn.commit()
+
+    async def remove_moderator(self, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "DELETE FROM bot_moderators WHERE user_id = ?",
+            (user_id,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def is_moderator(self, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM bot_moderators WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
+    async def get_moderators(self) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            """
+            SELECT m.user_id, COALESCE(s.username, m.username) AS username
+            FROM bot_moderators m
+            LEFT JOIN seen_users s ON s.user_id = m.user_id
+            ORDER BY lower(COALESCE(s.username, m.username, '')), m.user_id
+            """
+        )
+        return await cursor.fetchall()
 
     async def add_admin_message_link(
         self,

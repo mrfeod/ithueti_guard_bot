@@ -26,6 +26,9 @@ ADMIN_COMMANDS = [
     BotCommand(command="unban", description="разбанить пользователя"),
     BotCommand(command="reg", description="зарегистрировать пользователя"),
     BotCommand(command="unreg", description="убрать регистрацию"),
+    BotCommand(command="mod", description="дать права модератора"),
+    BotCommand(command="demod", description="забрать права модератора"),
+    BotCommand(command="modlist", description="список модераторов"),
     BotCommand(command="ignore", description="не пересылать сообщения"),
     BotCommand(command="unignore", description="снова пересылать сообщения"),
 ]
@@ -38,9 +41,13 @@ ADMIN_COMMAND_NAMES = {
     "unban",
     "reg",
     "unreg",
+    "mod",
+    "demod",
+    "modlist",
     "ignore",
     "unignore",
 }
+MODERATOR_CHAT_COMMAND_NAMES = {"ban", "remove", "unban"}
 
 
 class ChatIdLoggingMiddleware(BaseMiddleware):
@@ -167,8 +174,16 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
         chat_id = message.chat.id
         text = message.text or ""
 
-        if await db.is_admin(user_id):
-            if await handle_chat_admin_command(db, moderation, message, text):
+        is_admin = await db.is_admin(user_id)
+        is_moderator = await db.is_moderator(user_id)
+        if is_admin or is_moderator:
+            if await handle_chat_admin_command(
+                db,
+                moderation,
+                message,
+                text,
+                is_admin=is_admin,
+            ):
                 return
 
         if text == settings.challenge_phrase:
@@ -227,6 +242,10 @@ async def handle_private_admin_command(
         await message.answer(admin_help_text())
         return True
 
+    if command == "modlist":
+        await message.answer(await modlist_text(db))
+        return True
+
     if command not in ADMIN_COMMAND_NAMES:
         return False
 
@@ -256,7 +275,7 @@ async def handle_private_admin_command(
             (
                 "Нужно так: /status @username, /ban @username, /remove @username, "
                 "/unban @username, /reg @username, /unreg @username, "
-                "/ignore @username или /unignore @username"
+                "/mod @username, /demod @username, /ignore @username или /unignore @username"
             )
         )
         return True
@@ -348,6 +367,21 @@ async def handle_admin_user_command(
         await message.answer("зареган")
         return
 
+    if command == "mod":
+        await db.add_moderator(user_id, username)
+        logger.info("moderator added: user_id=%s username=%r", user_id, username)
+        await moderation.notify_admins(f"модератор {user_label}")
+        await message.answer("модератор")
+        return
+
+    if command == "demod":
+        removed = await db.remove_moderator(user_id)
+        if removed:
+            logger.info("moderator removed: user_id=%s username=%r", user_id, username)
+            await moderation.notify_admins(f"больше не модератор {user_label}")
+        await message.answer("больше не модератор" if removed else "не был модератором")
+        return
+
     unregistered = await moderation.unregister_user(user_id, username)
     await message.answer("разреган" if unregistered else "не был зареган")
 
@@ -357,31 +391,52 @@ async def handle_chat_admin_command(
     moderation: ModerationService,
     message: Message,
     text: str,
+    *,
+    is_admin: bool,
 ) -> bool:
     command, _argument = parse_admin_command(text)
     if command is None:
         return False
+    if not is_admin and command not in MODERATOR_CHAT_COMMAND_NAMES:
+        return False
     if command in {"help", "commands"}:
         await message.answer(admin_help_text())
         return True
+    if command == "modlist":
+        await message.answer(await modlist_text(db))
+        return True
     if command not in ADMIN_COMMAND_NAMES:
         return False
-    if message.reply_to_message is None or message.reply_to_message.from_user is None:
+
+    target_user_id = None
+    target_username = None
+    command, argument = parse_admin_command(text)
+    if is_username_query(argument):
+        target_user_id = await db.get_user_id_by_username(argument)
+        target_username = argument.removeprefix("@")
+        if target_user_id is None:
+            await message.answer("неизвестен")
+            return True
+    elif message.reply_to_message is not None and message.reply_to_message.from_user is not None:
+        target = message.reply_to_message.from_user
+        target_user_id = target.id
+        target_username = target.username
+    else:
         return False
 
-    target = message.reply_to_message.from_user
     await handle_admin_user_command(
         db,
         moderation,
         message,
         command,
-        target.id,
-        target.username,
+        target_user_id,
+        target_username,
     )
 
     if command in {"ban", "remove"}:
-        await moderation.delete_known_user_messages(message.chat.id, target.id)
-        await moderation.delete_message(message.chat.id, message.reply_to_message.message_id)
+        await moderation.delete_known_user_messages(message.chat.id, target_user_id)
+        if message.reply_to_message is not None:
+            await moderation.delete_message(message.chat.id, message.reply_to_message.message_id)
         await moderation.delete_message(message.chat.id, message.message_id)
 
     return True
@@ -397,10 +452,25 @@ def admin_help_text() -> str:
         "/unban @username - разбанить в чатах и канале, затем зарегистрировать\n"
         "/reg @username - зарегистрировать\n"
         "/unreg @username - убрать регистрацию\n"
+        "/mod @username - дать права модератора\n"
+        "/demod @username - забрать права модератора\n"
+        "/modlist - список модераторов\n"
         "/ignore @username - не пересылать личные сообщения пользователя\n"
         "/unignore @username - снова пересылать личные сообщения пользователя\n"
         "Эти же команды можно писать ответом на сообщение пользователя без @username."
     )
+
+
+async def modlist_text(db: Database) -> str:
+    moderators = await db.get_moderators()
+    if not moderators:
+        return "модераторов нет"
+
+    lines = ["Модераторы:"]
+    for moderator in moderators:
+        username = moderator["username"]
+        lines.append(f"@{username}" if username else str(moderator["user_id"]))
+    return "\n".join(lines)
 
 
 def parse_admin_command(text: str) -> tuple[str | None, str]:
