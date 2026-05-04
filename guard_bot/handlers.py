@@ -286,14 +286,7 @@ async def handle_private_admin_command(
 
     user_id = await db.get_user_id_by_username(argument)
     if user_id is None:
-        if command == "reg":
-            await moderation.register_username(argument, "admin_private_username_reg")
-            await message.answer("зареган")
-            return True
-
-        if command == "unreg":
-            unregistered = await moderation.unregister_username(argument)
-            await message.answer("разреган" if unregistered else "не был зареган")
+        if await handle_unknown_username_admin_command(db, moderation, message, command, argument):
             return True
 
         await message.answer("неизвестен")
@@ -308,6 +301,43 @@ async def handle_private_admin_command(
         argument.removeprefix("@"),
     )
     return True
+
+
+async def handle_unknown_username_admin_command(
+    db: Database,
+    moderation: ModerationService,
+    message: Message,
+    command: str,
+    username: str,
+) -> bool:
+    if command == "reg":
+        await moderation.register_username(username, "admin_private_username_reg")
+        await message.answer("зареган")
+        return True
+
+    if command == "unreg":
+        unregistered = await moderation.unregister_username(username)
+        await message.answer("разреган" if unregistered else "не был зареган")
+        return True
+
+    if command == "mod":
+        await db.add_moderator_username(username)
+        normalized = db.normalize_username(username)
+        logger.info("moderator username added: username=%r", normalized)
+        await moderation.notify_admins(f"модератор @{normalized}")
+        await message.answer("модератор")
+        return True
+
+    if command == "demod":
+        removed = await db.remove_moderator_username(username)
+        normalized = db.normalize_username(username)
+        if removed:
+            logger.info("moderator username removed: username=%r", normalized)
+            await moderation.notify_admins(f"больше не модератор @{normalized}")
+        await message.answer("больше не модератор" if removed else "не был модератором")
+        return True
+
+    return False
 
 
 async def handle_admin_user_command(
@@ -415,6 +445,14 @@ async def handle_chat_admin_command(
         target_user_id = await db.get_user_id_by_username(argument)
         target_username = argument.removeprefix("@")
         if target_user_id is None:
+            if await handle_unknown_username_admin_command(
+                db,
+                moderation,
+                message,
+                command,
+                argument,
+            ):
+                return True
             await message.answer("неизвестен")
             return True
     elif message.reply_to_message is not None and message.reply_to_message.from_user is not None:
@@ -469,7 +507,10 @@ async def modlist_text(db: Database) -> str:
     lines = ["Модераторы:"]
     for moderator in moderators:
         username = moderator["username"]
-        lines.append(f"@{username}" if username else str(moderator["user_id"]))
+        if username:
+            lines.append(f"@{username}")
+        else:
+            lines.append(str(moderator["user_id"]))
     return "\n".join(lines)
 
 

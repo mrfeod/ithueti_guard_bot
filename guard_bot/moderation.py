@@ -33,6 +33,12 @@ class ModerationService:
             return True
 
         username = await self.db.get_username(user_id)
+        if await self.db.is_moderator_username(username):
+            await self.db.add_moderator(user_id, username)
+            await self.db.remove_moderator_username(username or "")
+            await self.notify_admins(f"модератор @{self.db.normalize_username(username)}")
+            return True
+
         if await self.db.is_registered_username(username):
             await self.register_user(user_id, "admin_username_reg", username)
             return True
@@ -155,10 +161,12 @@ class ModerationService:
             await self.db.delete_challenge(challenge_id)
             return
 
-        await self._delete_message(chat_id, int(challenge["original_message_id"]))
-        await self._delete_message(chat_id, int(challenge["challenge_message_id"]))
+        challenges = await self.db.get_user_challenges(chat_id, user_id)
+        for pending_challenge in challenges:
+            await self._delete_message(chat_id, int(pending_challenge["original_message_id"]))
+            await self._delete_message(chat_id, int(pending_challenge["challenge_message_id"]))
         await self.ban_user(chat_id, user_id, "challenge_timeout")
-        await self.db.delete_challenge(challenge_id)
+        await self.db.delete_user_challenges(chat_id, user_id)
 
     async def ban_user(
         self,

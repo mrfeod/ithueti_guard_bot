@@ -76,6 +76,11 @@ class Database:
                 added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS bot_moderator_usernames (
+                username TEXT PRIMARY KEY,
+                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS admin_message_links (
                 admin_id INTEGER NOT NULL,
                 admin_message_id INTEGER NOT NULL,
@@ -168,6 +173,18 @@ class Database:
 
         cursor = await self.conn.execute(
             "SELECT 1 FROM registered_usernames WHERE username = ?",
+            (normalized,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
+    async def is_moderator_username(self, username: str | None) -> bool:
+        normalized = self.normalize_username(username)
+        if not normalized:
+            return False
+
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM bot_moderator_usernames WHERE username = ?",
             (normalized,),
         )
         row = await cursor.fetchone()
@@ -309,6 +326,27 @@ class Database:
         )
         await self.conn.commit()
 
+    async def add_moderator_username(self, username: str) -> None:
+        normalized = self.normalize_username(username)
+        await self.conn.execute(
+            """
+            INSERT INTO bot_moderator_usernames (username)
+            VALUES (?)
+            ON CONFLICT(username) DO UPDATE SET added_at = CURRENT_TIMESTAMP
+            """,
+            (normalized,),
+        )
+        await self.conn.commit()
+
+    async def remove_moderator_username(self, username: str) -> bool:
+        normalized = self.normalize_username(username)
+        cursor = await self.conn.execute(
+            "DELETE FROM bot_moderator_usernames WHERE username = ?",
+            (normalized,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
     async def remove_moderator(self, user_id: int) -> bool:
         cursor = await self.conn.execute(
             "DELETE FROM bot_moderators WHERE user_id = ?",
@@ -328,10 +366,19 @@ class Database:
     async def get_moderators(self) -> list[aiosqlite.Row]:
         cursor = await self.conn.execute(
             """
-            SELECT m.user_id, COALESCE(s.username, m.username) AS username
+            SELECT
+                m.user_id,
+                COALESCE(s.username, m.username) AS username,
+                'user' AS source
             FROM bot_moderators m
             LEFT JOIN seen_users s ON s.user_id = m.user_id
-            ORDER BY lower(COALESCE(s.username, m.username, '')), m.user_id
+            UNION ALL
+            SELECT
+                NULL AS user_id,
+                username,
+                'username' AS source
+            FROM bot_moderator_usernames
+            ORDER BY username COLLATE NOCASE, user_id
             """
         )
         return await cursor.fetchall()
