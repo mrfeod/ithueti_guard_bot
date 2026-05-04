@@ -313,15 +313,19 @@ async def handle_unknown_username_admin_command(
     message: Message,
     command: str,
     username: str,
+    *,
+    silent: bool = False,
 ) -> bool:
     if command == "reg":
         await moderation.register_username(username, "admin_private_username_reg")
-        await message.answer("зареган")
+        if not silent:
+            await message.answer("зареган")
         return True
 
     if command == "unreg":
         unregistered = await moderation.unregister_username(username)
-        await message.answer("разреган" if unregistered else "не был зареган")
+        if not silent:
+            await message.answer("разреган" if unregistered else "не был зареган")
         return True
 
     if command == "mod":
@@ -329,7 +333,8 @@ async def handle_unknown_username_admin_command(
         normalized = db.normalize_username(username)
         logger.info("moderator username added: username=%r", normalized)
         await moderation.notify_admins(f"модератор @{normalized}")
-        await message.answer("модератор")
+        if not silent:
+            await message.answer("модератор")
         return True
 
     if command == "demod":
@@ -338,7 +343,8 @@ async def handle_unknown_username_admin_command(
         if removed:
             logger.info("moderator username removed: username=%r", normalized)
             await moderation.notify_admins(f"больше не модератор @{normalized}")
-        await message.answer("больше не модератор" if removed else "не был модератором")
+        if not silent:
+            await message.answer("больше не модератор" if removed else "не был модератором")
         return True
 
     return False
@@ -351,18 +357,22 @@ async def handle_admin_user_command(
     command: str,
     user_id: int,
     username: str | None = None,
+    *,
+    silent: bool = False,
 ) -> None:
     user_label = f"@{username}" if username else str(user_id)
 
     if command == "status":
-        await message.answer(await db.get_status_by_user(user_id, username))
+        if not silent:
+            await message.answer(await db.get_status_by_user(user_id, username))
         return
 
     if command == "ignore":
         await db.ignore_user(user_id)
         logger.info("user ignored: user_id=%s username=%r", user_id, username)
         await moderation.notify_admins(f"игнорируется {user_label}")
-        await message.answer("игнорируется")
+        if not silent:
+            await message.answer("игнорируется")
         return
 
     if command == "unignore":
@@ -370,7 +380,8 @@ async def handle_admin_user_command(
         if unignored:
             logger.info("user unignored: user_id=%s username=%r", user_id, username)
             await moderation.notify_admins(f"больше не игнорируется {user_label}")
-        await message.answer("больше не игнорируется" if unignored else "не игнорировался")
+        if not silent:
+            await message.answer("больше не игнорируется" if unignored else "не игнорировался")
         return
 
     if command == "ban":
@@ -379,7 +390,8 @@ async def handle_admin_user_command(
             "admin_private_ban",
             username=username,
         )
-        await message.answer("забанен" if banned else "не смог забанить")
+        if not silent:
+            await message.answer("забанен" if banned else "не смог забанить")
         return
 
     if command == "remove":
@@ -388,24 +400,28 @@ async def handle_admin_user_command(
             "admin_private_remove",
             username=username,
         )
-        await message.answer("удален" if removed else "не смог удалить")
+        if not silent:
+            await message.answer("удален" if removed else "не смог удалить")
         return
 
     if command == "unban":
         unbanned = await moderation.unban_user_everywhere_and_register(user_id, username)
-        await message.answer("разбанен" if unbanned else "бот его не банил")
+        if not silent:
+            await message.answer("разбанен" if unbanned else "бот его не банил")
         return
 
     if command == "reg":
         await moderation.register_user(user_id, "admin_private_reg", username)
-        await message.answer("зареган")
+        if not silent:
+            await message.answer("зареган")
         return
 
     if command == "mod":
         await db.add_moderator(user_id, username)
         logger.info("moderator added: user_id=%s username=%r", user_id, username)
         await moderation.notify_admins(f"модератор {user_label}")
-        await message.answer("модератор")
+        if not silent:
+            await message.answer("модератор")
         return
 
     if command == "demod":
@@ -413,11 +429,13 @@ async def handle_admin_user_command(
         if removed:
             logger.info("moderator removed: user_id=%s username=%r", user_id, username)
             await moderation.notify_admins(f"больше не модератор {user_label}")
-        await message.answer("больше не модератор" if removed else "не был модератором")
+        if not silent:
+            await message.answer("больше не модератор" if removed else "не был модератором")
         return
 
     unregistered = await moderation.unregister_user(user_id, username)
-    await message.answer("разреган" if unregistered else "не был зареган")
+    if not silent:
+        await message.answer("разреган" if unregistered else "не был зареган")
 
 
 async def handle_chat_admin_command(
@@ -434,10 +452,10 @@ async def handle_chat_admin_command(
     if not is_admin and command not in MODERATOR_CHAT_COMMAND_NAMES:
         return False
     if command in {"help", "commands"}:
-        await message.answer(admin_help_text())
+        await moderation.delete_message(message.chat.id, message.message_id)
         return True
     if command == "modlist":
-        await message.answer(await modlist_text(db))
+        await moderation.delete_message(message.chat.id, message.message_id)
         return True
     if command not in ADMIN_COMMAND_NAMES:
         return False
@@ -455,9 +473,11 @@ async def handle_chat_admin_command(
                 message,
                 command,
                 argument,
+                silent=True,
             ):
+                await moderation.delete_message(message.chat.id, message.message_id)
                 return True
-            await message.answer("неизвестен")
+            await moderation.delete_message(message.chat.id, message.message_id)
             return True
     elif message.reply_to_message is not None and message.reply_to_message.from_user is not None:
         target = message.reply_to_message.from_user
@@ -473,7 +493,11 @@ async def handle_chat_admin_command(
         command,
         target_user_id,
         target_username,
+        silent=True,
     )
+
+    if command not in {"ban", "remove"}:
+        await moderation.delete_message(message.chat.id, message.message_id)
 
     if command in {"ban", "remove"}:
         await moderation.delete_known_user_messages(message.chat.id, target_user_id)

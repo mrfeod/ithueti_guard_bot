@@ -43,14 +43,6 @@ class ModerationService:
             await self.register_user(user_id, "admin_username_reg", username)
             return True
 
-        if await self._is_chat_member(chat_id, user_id):
-            await self.register_user(user_id, "chat_member")
-            return True
-
-        if await self._is_channel_subscriber(user_id):
-            await self.register_user(user_id, "channel_subscriber")
-            return True
-
         return False
 
     async def _is_chat_member(self, chat_id: int, user_id: int) -> bool:
