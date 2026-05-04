@@ -8,7 +8,7 @@ from aiogram import BaseMiddleware
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import CommandStart
-from aiogram.types import BotCommand, BotCommandScopeChat, Message, MessageReactionUpdated, User
+from aiogram.types import BotCommand, BotCommandScopeChat, Message, MessageId, MessageReactionUpdated, User
 
 from guard_bot.config import Settings
 from guard_bot.db import Database
@@ -117,6 +117,9 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             return
 
         if await db.is_admin(user.id):
+            if await handle_admin_reply_to_user(db, message):
+                return
+
             command_result = await handle_private_admin_command(db, moderation, message, text)
             if command_result:
                 return
@@ -306,10 +309,57 @@ async def notify_admins(db: Database, message: Message) -> None:
         if admin_id == message.from_user.id:
             continue
         try:
-            await message.bot.send_message(admin_id, service_message, parse_mode="HTML")
-            await forward_or_fallback(message, admin_id, notification)
+            service = await message.bot.send_message(
+                admin_id,
+                service_message,
+                parse_mode="HTML",
+            )
+            await db.add_admin_message_link(admin_id, service.message_id, message.from_user.id)
+
+            delivered = await forward_or_fallback(message, admin_id, notification)
+            await db.add_admin_message_link(
+                admin_id,
+                delivered_message_id(delivered),
+                message.from_user.id,
+            )
         except Exception:
             logger.exception("failed to notify admin %s", admin_id)
+
+
+async def handle_admin_reply_to_user(db: Database, message: Message) -> bool:
+    if message.from_user is None or message.reply_to_message is None:
+        return False
+
+    target_user_id = await db.get_admin_message_link_user_id(
+        admin_id=message.from_user.id,
+        admin_message_id=message.reply_to_message.message_id,
+    )
+    if target_user_id is None:
+        return False
+
+    try:
+        await message.bot.copy_message(
+            chat_id=target_user_id,
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+    except Exception:
+        logger.exception(
+            "failed to send admin reply %s to user %s",
+            message.message_id,
+            target_user_id,
+        )
+        await message.answer("Не смог отправить.")
+        return True
+
+    logger.info(
+        "admin reply sent: admin_id=%s user_id=%s message_id=%s",
+        message.from_user.id,
+        target_user_id,
+        message.message_id,
+    )
+    await message.answer("Отправил.")
+    return True
 
 
 async def set_admin_commands(message: Message) -> None:
@@ -335,25 +385,27 @@ def user_contact_html(user: User) -> str:
     return f'<a href="tg://user?id={user.id}">{escaped_label}</a>'
 
 
-async def forward_or_fallback(message: Message, admin_id: int, fallback: str) -> None:
+async def forward_or_fallback(message: Message, admin_id: int, fallback: str) -> Message | MessageId:
     try:
-        await message.bot.forward_message(
+        return await message.bot.forward_message(
             chat_id=admin_id,
             from_chat_id=message.chat.id,
             message_id=message.message_id,
         )
-        return
     except Exception:
         logger.exception("failed to forward message %s to admin %s", message.message_id, admin_id)
 
     try:
-        await message.bot.copy_message(
+        return await message.bot.copy_message(
             chat_id=admin_id,
             from_chat_id=message.chat.id,
             message_id=message.message_id,
         )
-        return
     except Exception:
         logger.exception("failed to copy message %s to admin %s", message.message_id, admin_id)
 
-    await message.bot.send_message(admin_id, fallback)
+    return await message.bot.send_message(admin_id, fallback)
+
+
+def delivered_message_id(message: Message | MessageId) -> int:
+    return message.message_id

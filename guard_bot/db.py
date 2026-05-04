@@ -69,6 +69,14 @@ class Database:
                 username TEXT,
                 added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS admin_message_links (
+                admin_id INTEGER NOT NULL,
+                admin_message_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (admin_id, admin_message_id)
+            );
             """
         )
         await self.conn.commit()
@@ -276,6 +284,42 @@ class Database:
         cursor = await self.conn.execute("SELECT user_id FROM bot_admins")
         rows = await cursor.fetchall()
         return [int(row["user_id"]) for row in rows]
+
+    async def add_admin_message_link(
+        self,
+        admin_id: int,
+        admin_message_id: int,
+        user_id: int,
+    ) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO admin_message_links (admin_id, admin_message_id, user_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(admin_id, admin_message_id) DO UPDATE SET
+                user_id = excluded.user_id,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (admin_id, admin_message_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def get_admin_message_link_user_id(
+        self,
+        admin_id: int,
+        admin_message_id: int,
+    ) -> int | None:
+        cursor = await self.conn.execute(
+            """
+            SELECT user_id
+            FROM admin_message_links
+            WHERE admin_id = ? AND admin_message_id = ?
+            """,
+            (admin_id, admin_message_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return int(row["user_id"])
 
     async def get_status_by_username(self, username: str) -> str:
         normalized = self.normalize_username(username)
