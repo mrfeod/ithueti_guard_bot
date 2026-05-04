@@ -280,7 +280,7 @@ class Database:
     async def get_status_by_username(self, username: str) -> str:
         normalized = self.normalize_username(username)
         if not normalized:
-            return "неизвестен"
+            return "не зарегистрирован"
 
         cursor = await self.conn.execute(
             "SELECT user_id FROM seen_users WHERE lower(username) = ?",
@@ -289,8 +289,8 @@ class Database:
         user = await cursor.fetchone()
         if user is None:
             if await self.is_registered_username(normalized):
-                return "зареган"
-            return "неизвестен"
+                return "зарегистрирован"
+            return "не зарегистрирован"
 
         user_id = int(user["user_id"])
         bans = await self.get_user_bans(user_id)
@@ -298,9 +298,19 @@ class Database:
             return "забанен"
 
         if await self.is_registered(user_id) or await self.is_registered_username(normalized):
-            return "зареган"
+            return "зарегистрирован"
 
-        return "неизвестен"
+        return "не зарегистрирован"
+
+    async def get_status_by_user(self, user_id: int, username: str | None = None) -> str:
+        bans = await self.get_user_bans(user_id)
+        if bans:
+            return "забанен"
+
+        if await self.is_registered(user_id) or await self.is_registered_username(username):
+            return "зарегистрирован"
+
+        return "не зарегистрирован"
 
     @staticmethod
     def normalize_username(username: str | None) -> str:

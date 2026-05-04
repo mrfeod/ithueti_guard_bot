@@ -1,4 +1,6 @@
+import html
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -6,13 +8,24 @@ from aiogram import BaseMiddleware
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import CommandStart
-from aiogram.types import Message, MessageReactionUpdated
+from aiogram.types import BotCommand, BotCommandScopeChat, Message, MessageReactionUpdated, User
 
 from guard_bot.config import Settings
 from guard_bot.db import Database
 from guard_bot.moderation import ModerationService
 
 logger = logging.getLogger(__name__)
+
+USER_REPLIES = ("Ясно", "Понятно", "Ок", "Принято", "Лады", "Дакси", "Угу", "Ну дык")
+USER_COMMANDS = [BotCommand(command="status", description="проверить статус")]
+ADMIN_COMMANDS = [
+    BotCommand(command="help", description="команды админа"),
+    BotCommand(command="status", description="проверить статус пользователя"),
+    BotCommand(command="ban", description="забанить пользователя"),
+    BotCommand(command="unban", description="разбанить пользователя"),
+    BotCommand(command="reg", description="зарегистрировать пользователя"),
+    BotCommand(command="unreg", description="убрать регистрацию"),
+]
 
 
 class ChatIdLoggingMiddleware(BaseMiddleware):
@@ -71,7 +84,22 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
     @router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
     async def start_private(message: Message) -> None:
-        await message.answer("Напиши код администратора или фразу для разбана.")
+        if message.from_user is None:
+            return
+        await message.bot.set_my_commands(
+            USER_COMMANDS,
+            scope=BotCommandScopeChat(chat_id=message.chat.id),
+        )
+        if await db.is_admin(message.from_user.id):
+            await set_admin_commands(message)
+        await message.answer(
+            (
+                f"Подпишись на {html.escape(settings.required_channel)} и проблем не будет. "
+                "Если тебя забанил бот напиши мне:\n"
+                f"<code>{html.escape(settings.unban_phrase)}</code>"
+            ),
+            parse_mode="HTML",
+        )
 
     @router.message(F.chat.type == ChatType.PRIVATE)
     async def private_message(message: Message) -> None:
@@ -83,6 +111,8 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
         if text == settings.admin_secret:
             await db.add_admin(user.id, user.username)
+            logger.info("admin added: user_id=%s username=%r", user.id, user.username)
+            await set_admin_commands(message)
             await message.answer("Что, новый хозяин, надо?!")
             return
 
@@ -91,18 +121,21 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             if command_result:
                 return
 
-        if await db.is_admin(user.id) and is_username_query(text):
-            await message.answer(await db.get_status_by_username(text))
+        if is_private_status_command(text):
+            await message.answer(await db.get_status_by_user(user.id, user.username))
             return
 
-        if text == settings.unban_phrase:
+        if is_unban_phrase(text, settings.unban_phrase):
             unbanned = await moderation.unban_and_register(user.id, user.username)
             if unbanned:
-                await message.answer("Разбанил и зарегистрировал.")
+                await message.answer("Разбанил.")
             else:
-                await message.answer("Я тебя не банил.")
+                await message.answer("Ты не был забанен. Пока.")
+            await notify_admins(db, message)
+            return
 
         await notify_admins(db, message)
+        await message.answer(random.choice(USER_REPLIES))
 
     @router.message(F.chat.id.in_(settings.moderated_chat_id_set))
     async def moderated_chat_message(message: Message) -> None:
@@ -185,13 +218,20 @@ async def handle_private_admin_command(
         await message.answer(admin_help_text())
         return True
 
-    if command not in {"ban", "unban", "reg", "unreg"}:
+    if command not in {"status", "ban", "unban", "reg", "unreg"}:
         return False
 
     if not is_username_query(argument):
         await message.answer(
-            "Нужно так: ban @username, unban @username, reg @username или unreg @username"
+            (
+                "Нужно так: /status @username, /ban @username, /unban @username, "
+                "/reg @username или /unreg @username"
+            )
         )
+        return True
+
+    if command == "status":
+        await message.answer(await db.get_status_by_username(argument))
         return True
 
     user_id = await db.get_user_id_by_username(argument)
@@ -237,12 +277,12 @@ async def handle_private_admin_command(
 def admin_help_text() -> str:
     return (
         "Команды админа:\n"
-        "help - показать список команд\n"
-        "ban @username - забанить во всех модерируемых чатах\n"
-        "unban @username - разбанить и зарегистрировать\n"
-        "reg @username - зарегистрировать\n"
-        "unreg @username - убрать регистрацию\n"
-        "@username - проверить статус"
+        "/help - показать список команд\n"
+        "/status @username - проверить статус\n"
+        "/ban @username - забанить во всех модерируемых чатах\n"
+        "/unban @username - разбанить и зарегистрировать\n"
+        "/reg @username - зарегистрировать\n"
+        "/unreg @username - убрать регистрацию"
     )
 
 
@@ -259,12 +299,61 @@ async def notify_admins(db: Database, message: Message) -> None:
     sender = f"@{username}" if username else str(message.from_user.id)
     text = message.text or message.caption or "<non-text message>"
     notification = f"{sender}: {text}"
+    service_message = f"Сообщение от {user_contact_html(message.from_user)}"
 
     admin_ids = await db.get_admin_ids()
     for admin_id in admin_ids:
         if admin_id == message.from_user.id:
             continue
         try:
-            await message.bot.send_message(admin_id, notification)
+            await message.bot.send_message(admin_id, service_message, parse_mode="HTML")
+            await forward_or_fallback(message, admin_id, notification)
         except Exception:
             logger.exception("failed to notify admin %s", admin_id)
+
+
+async def set_admin_commands(message: Message) -> None:
+    await message.bot.set_my_commands(
+        ADMIN_COMMANDS,
+        scope=BotCommandScopeChat(chat_id=message.chat.id),
+    )
+
+
+def is_private_status_command(text: str) -> bool:
+    return text.partition(" ")[0].split("@", 1)[0].lower() == "/status"
+
+
+def is_unban_phrase(text: str, unban_phrase: str) -> bool:
+    return text.strip().casefold() == unban_phrase.casefold()
+
+
+def user_contact_html(user: User) -> str:
+    name_parts = [user.first_name, user.last_name]
+    name = " ".join(part for part in name_parts if part) or user.username or str(user.id)
+    username = f" (@{user.username})" if user.username else ""
+    escaped_label = html.escape(f"{name}{username}")
+    return f'<a href="tg://user?id={user.id}">{escaped_label}</a>'
+
+
+async def forward_or_fallback(message: Message, admin_id: int, fallback: str) -> None:
+    try:
+        await message.bot.forward_message(
+            chat_id=admin_id,
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+        return
+    except Exception:
+        logger.exception("failed to forward message %s to admin %s", message.message_id, admin_id)
+
+    try:
+        await message.bot.copy_message(
+            chat_id=admin_id,
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+        return
+    except Exception:
+        logger.exception("failed to copy message %s to admin %s", message.message_id, admin_id)
+
+    await message.bot.send_message(admin_id, fallback)

@@ -2,12 +2,12 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from guard_bot.config import Settings
 from guard_bot.db import Database
-from guard_bot.handlers import create_router
+from guard_bot.handlers import USER_COMMANDS, create_router
 from guard_bot.moderation import ModerationService
 
 
@@ -26,6 +26,7 @@ async def run() -> None:
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    await bot.set_my_commands(USER_COMMANDS)
     dispatcher = Dispatcher()
     moderation = ModerationService(bot, db, settings)
     dispatcher.include_router(create_router(db, moderation, settings))

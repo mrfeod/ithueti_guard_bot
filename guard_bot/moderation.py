@@ -89,12 +89,19 @@ class ModerationService:
         was_registered = await self.db.is_registered(user_id)
         await self.db.register_user(user_id, source)
         if not was_registered:
+            logger.info(
+                "user registered: user_id=%s username=%r source=%s",
+                user_id,
+                username,
+                source,
+            )
             await self.notify_admins_user_registered(user_id, username)
 
     async def unregister_user(self, user_id: int, username: str | None = None) -> bool:
         was_registered = await self.db.unregister_user(user_id)
         was_username_registered = await self.db.unregister_username(username) if username else False
         if was_registered or was_username_registered:
+            logger.info("user unregistered: user_id=%s username=%r", user_id, username)
             await self.notify_admins_user_unregistered(user_id, username)
         return was_registered or was_username_registered
 
@@ -102,11 +109,13 @@ class ModerationService:
         was_registered = await self.db.is_registered_username(username)
         await self.db.register_username(username, source)
         if not was_registered:
+            logger.info("username registered: username=%r source=%s", username, source)
             await self.notify_admins(f"зареган @{self.db.normalize_username(username)}")
 
     async def unregister_username(self, username: str) -> bool:
         was_registered = await self.db.unregister_username(username)
         if was_registered:
+            logger.info("username unregistered: username=%r", username)
             await self.notify_admins(f"разреган @{self.db.normalize_username(username)}")
         return was_registered
 
@@ -158,6 +167,12 @@ class ModerationService:
         try:
             await self.bot.ban_chat_member(chat_id, user_id)
             await self.db.mark_banned(user_id, chat_id, reason)
+            logger.info(
+                "user banned: user_id=%s chat_id=%s reason=%s",
+                user_id,
+                chat_id,
+                reason,
+            )
             await self.notify_admins_user_banned(user_id, username)
         except TelegramAPIError:
             logger.exception("failed to ban user %s in chat %s", user_id, chat_id)
@@ -180,6 +195,12 @@ class ModerationService:
         try:
             await self.bot.ban_chat_member(chat_id, user_id)
             await self.db.mark_banned(user_id, chat_id, reason)
+            logger.info(
+                "user banned: user_id=%s chat_id=%s reason=%s",
+                user_id,
+                chat_id,
+                reason,
+            )
             return True
         except TelegramAPIError:
             logger.exception("failed to ban user %s in chat %s", user_id, chat_id)
@@ -231,12 +252,14 @@ class ModerationService:
             try:
                 await self.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
                 await self.db.clear_user_ban(user_id, chat_id)
+                logger.info("user unbanned: user_id=%s chat_id=%s", user_id, chat_id)
                 unbanned += 1
             except TelegramAPIError:
                 logger.exception("failed to unban user %s in chat %s", user_id, chat_id)
 
         await self.db.clear_user_bans(user_id)
         if unbanned:
+            await self.notify_admins(f"разбанен {await self.get_user_label(user_id, username)}")
             await self.register_user(user_id, "private_unban_phrase", username)
         return unbanned
 
