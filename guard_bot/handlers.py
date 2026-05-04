@@ -25,6 +25,8 @@ ADMIN_COMMANDS = [
     BotCommand(command="unban", description="разбанить пользователя"),
     BotCommand(command="reg", description="зарегистрировать пользователя"),
     BotCommand(command="unreg", description="убрать регистрацию"),
+    BotCommand(command="ignore", description="не пересылать сообщения"),
+    BotCommand(command="unignore", description="снова пересылать сообщения"),
 ]
 
 
@@ -221,14 +223,14 @@ async def handle_private_admin_command(
         await message.answer(admin_help_text())
         return True
 
-    if command not in {"status", "ban", "unban", "reg", "unreg"}:
+    if command not in {"status", "ban", "unban", "reg", "unreg", "ignore", "unignore"}:
         return False
 
     if not is_username_query(argument):
         await message.answer(
             (
                 "Нужно так: /status @username, /ban @username, /unban @username, "
-                "/reg @username или /unreg @username"
+                "/reg @username, /unreg @username, /ignore @username или /unignore @username"
             )
         )
         return True
@@ -250,6 +252,21 @@ async def handle_private_admin_command(
             return True
 
         await message.answer("неизвестен")
+        return True
+
+    if command == "ignore":
+        await db.ignore_user(user_id)
+        logger.info("user ignored: user_id=%s username=%r", user_id, argument)
+        await moderation.notify_admins(f"игнорируется {argument}")
+        await message.answer("игнорируется")
+        return True
+
+    if command == "unignore":
+        unignored = await db.unignore_user(user_id)
+        if unignored:
+            logger.info("user unignored: user_id=%s username=%r", user_id, argument)
+            await moderation.notify_admins(f"больше не игнорируется {argument}")
+        await message.answer("больше не игнорируется" if unignored else "не игнорировался")
         return True
 
     if command == "ban":
@@ -285,7 +302,9 @@ def admin_help_text() -> str:
         "/ban @username - забанить во всех модерируемых чатах\n"
         "/unban @username - разбанить и зарегистрировать\n"
         "/reg @username - зарегистрировать\n"
-        "/unreg @username - убрать регистрацию"
+        "/unreg @username - убрать регистрацию\n"
+        "/ignore @username - не пересылать личные сообщения пользователя\n"
+        "/unignore @username - снова пересылать личные сообщения пользователя"
     )
 
 
@@ -296,6 +315,14 @@ def is_username_query(text: str) -> bool:
 
 async def notify_admins(db: Database, message: Message) -> None:
     if message.from_user is None:
+        return
+
+    if await db.is_ignored(message.from_user.id):
+        logger.info(
+            "ignored private message: user_id=%s message_id=%s",
+            message.from_user.id,
+            message.message_id,
+        )
         return
 
     username = message.from_user.username

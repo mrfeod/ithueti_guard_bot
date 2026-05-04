@@ -77,6 +77,11 @@ class Database:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (admin_id, admin_message_id)
             );
+
+            CREATE TABLE IF NOT EXISTS ignored_users (
+                user_id INTEGER PRIMARY KEY,
+                ignored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         await self.conn.commit()
@@ -321,10 +326,37 @@ class Database:
             return None
         return int(row["user_id"])
 
+    async def ignore_user(self, user_id: int) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO ignored_users (user_id)
+            VALUES (?)
+            ON CONFLICT(user_id) DO UPDATE SET ignored_at = CURRENT_TIMESTAMP
+            """,
+            (user_id,),
+        )
+        await self.conn.commit()
+
+    async def unignore_user(self, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "DELETE FROM ignored_users WHERE user_id = ?",
+            (user_id,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def is_ignored(self, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM ignored_users WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
     async def get_status_by_username(self, username: str) -> str:
         normalized = self.normalize_username(username)
         if not normalized:
-            return "не зарегистрирован"
+            return self.format_status("не зарегистрирован", False)
 
         cursor = await self.conn.execute(
             "SELECT user_id FROM seen_users WHERE lower(username) = ?",
@@ -333,28 +365,35 @@ class Database:
         user = await cursor.fetchone()
         if user is None:
             if await self.is_registered_username(normalized):
-                return "зарегистрирован"
-            return "не зарегистрирован"
+                return self.format_status("зарегистрирован", False)
+            return self.format_status("не зарегистрирован", False)
 
         user_id = int(user["user_id"])
+        ignored = await self.is_ignored(user_id)
         bans = await self.get_user_bans(user_id)
         if bans:
-            return "забанен"
+            return self.format_status("забанен", ignored)
 
         if await self.is_registered(user_id) or await self.is_registered_username(normalized):
-            return "зарегистрирован"
+            return self.format_status("зарегистрирован", ignored)
 
-        return "не зарегистрирован"
+        return self.format_status("не зарегистрирован", ignored)
 
     async def get_status_by_user(self, user_id: int, username: str | None = None) -> str:
+        ignored = await self.is_ignored(user_id)
         bans = await self.get_user_bans(user_id)
         if bans:
-            return "забанен"
+            return self.format_status("забанен", ignored)
 
         if await self.is_registered(user_id) or await self.is_registered_username(username):
-            return "зарегистрирован"
+            return self.format_status("зарегистрирован", ignored)
 
-        return "не зарегистрирован"
+        return self.format_status("не зарегистрирован", ignored)
+
+    @staticmethod
+    def format_status(chat_status: str, ignored: bool) -> str:
+        bot_status = "игнорируется" if ignored else "не игнорируется"
+        return f"чат: {chat_status}\nбот: {bot_status}"
 
     @staticmethod
     def normalize_username(username: str | None) -> str:
