@@ -191,6 +191,19 @@ class ModerationService:
             await self.notify_admins_user_banned(user_id, username)
         return banned
 
+    async def remove_user_everywhere(
+        self,
+        user_id: int,
+        reason: str,
+        username: str | None = None,
+    ) -> int:
+        removed = await self.ban_user_everywhere(user_id, reason, username)
+        if await self.ban_user_in_required_channel(user_id, reason):
+            removed += 1
+            user_label = await self.get_user_label(user_id, username)
+            await self.notify_admins(f"забанен в канале {user_label}")
+        return removed
+
     async def ban_user_in_chat(self, chat_id: int, user_id: int, reason: str) -> bool:
         try:
             await self.bot.ban_chat_member(chat_id, user_id)
@@ -204,6 +217,24 @@ class ModerationService:
             return True
         except TelegramAPIError:
             logger.exception("failed to ban user %s in chat %s", user_id, chat_id)
+            return False
+
+    async def ban_user_in_required_channel(self, user_id: int, reason: str) -> bool:
+        try:
+            await self.bot.ban_chat_member(self.settings.required_channel, user_id)
+            logger.info(
+                "user banned in required channel: user_id=%s channel=%s reason=%s",
+                user_id,
+                self.settings.required_channel,
+                reason,
+            )
+            return True
+        except TelegramAPIError:
+            logger.exception(
+                "failed to ban user %s in channel %s",
+                user_id,
+                self.settings.required_channel,
+            )
             return False
 
     async def notify_admins_user_banned(self, user_id: int, username: str | None = None) -> None:
@@ -262,6 +293,56 @@ class ModerationService:
             await self.notify_admins(f"разбанен {await self.get_user_label(user_id, username)}")
             await self.register_user(user_id, "private_unban_phrase", username)
         return unbanned
+
+    async def unban_user_everywhere_and_register(
+        self,
+        user_id: int,
+        username: str | None = None,
+    ) -> int:
+        unbanned = 0
+        for chat_id in self.settings.moderated_chat_ids:
+            if await self.unban_user_in_chat(chat_id, user_id):
+                unbanned += 1
+
+        if await self.unban_user_in_required_channel(user_id):
+            unbanned += 1
+
+        await self.db.clear_user_bans(user_id)
+        if unbanned:
+            await self.notify_admins(f"разбанен {await self.get_user_label(user_id, username)}")
+            await self.register_user(user_id, "admin_private_unban", username)
+        return unbanned
+
+    async def unban_user_in_chat(self, chat_id: int, user_id: int) -> bool:
+        try:
+            await self.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+            await self.db.clear_user_ban(user_id, chat_id)
+            logger.info("user unbanned: user_id=%s chat_id=%s", user_id, chat_id)
+            return True
+        except TelegramAPIError:
+            logger.exception("failed to unban user %s in chat %s", user_id, chat_id)
+            return False
+
+    async def unban_user_in_required_channel(self, user_id: int) -> bool:
+        try:
+            await self.bot.unban_chat_member(
+                self.settings.required_channel,
+                user_id,
+                only_if_banned=True,
+            )
+            logger.info(
+                "user unbanned in required channel: user_id=%s channel=%s",
+                user_id,
+                self.settings.required_channel,
+            )
+            return True
+        except TelegramAPIError:
+            logger.exception(
+                "failed to unban user %s in channel %s",
+                user_id,
+                self.settings.required_channel,
+            )
+            return False
 
     async def delete_known_user_messages(self, chat_id: int, user_id: int) -> None:
         challenges = await self.db.get_user_challenges(chat_id, user_id)

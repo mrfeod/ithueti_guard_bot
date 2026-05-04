@@ -15,7 +15,9 @@ Telegram-бот для модерации чата комментариев ка
 - Пользователь может написать `UNBAN_PHRASE`, чтобы бот снял сохраненный бан и зарегистрировал его.
 - Прочие личные сообщения и медиа пересылаются админам.
 - Админка в личке включается фразой `ADMIN_SECRET`.
-- Админу доступны `/help`, `/status @username`, `/ban @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/ignore @username`, `/unignore @username`.
+- Админу доступны `/help`, `/status @username`, `/ban @username`, `/remove @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/ignore @username`, `/unignore @username`.
+- `/remove @username` банит пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`.
+- `/unban @username` разбанивает пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`, затем регистрирует его.
 - Пользователей из ignore-списка бот не пересылает админам в личке.
 
 ## .env

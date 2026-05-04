@@ -22,6 +22,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="help", description="команды админа"),
     BotCommand(command="status", description="проверить статус пользователя"),
     BotCommand(command="ban", description="забанить пользователя"),
+    BotCommand(command="remove", description="забанить в чате и канале"),
     BotCommand(command="unban", description="разбанить пользователя"),
     BotCommand(command="reg", description="зарегистрировать пользователя"),
     BotCommand(command="unreg", description="убрать регистрацию"),
@@ -223,14 +224,24 @@ async def handle_private_admin_command(
         await message.answer(admin_help_text())
         return True
 
-    if command not in {"status", "ban", "unban", "reg", "unreg", "ignore", "unignore"}:
+    if command not in {
+        "status",
+        "ban",
+        "remove",
+        "unban",
+        "reg",
+        "unreg",
+        "ignore",
+        "unignore",
+    }:
         return False
 
     if not is_username_query(argument):
         await message.answer(
             (
-                "Нужно так: /status @username, /ban @username, /unban @username, "
-                "/reg @username, /unreg @username, /ignore @username или /unignore @username"
+                "Нужно так: /status @username, /ban @username, /remove @username, "
+                "/unban @username, /reg @username, /unreg @username, "
+                "/ignore @username или /unignore @username"
             )
         )
         return True
@@ -278,9 +289,18 @@ async def handle_private_admin_command(
         await message.answer("забанен" if banned else "не смог забанить")
         return True
 
+    if command == "remove":
+        removed = await moderation.remove_user_everywhere(
+            user_id,
+            "admin_private_remove",
+            username=argument.removeprefix("@"),
+        )
+        await message.answer("удален" if removed else "не смог удалить")
+        return True
+
     username = argument.removeprefix("@")
     if command == "unban":
-        unbanned = await moderation.unban_and_register(user_id, username)
+        unbanned = await moderation.unban_user_everywhere_and_register(user_id, username)
         await message.answer("разбанен" if unbanned else "бот его не банил")
         return True
 
@@ -300,7 +320,8 @@ def admin_help_text() -> str:
         "/help - показать список команд\n"
         "/status @username - проверить статус\n"
         "/ban @username - забанить во всех модерируемых чатах\n"
-        "/unban @username - разбанить и зарегистрировать\n"
+        "/remove @username - забанить во всех чатах и в канале\n"
+        "/unban @username - разбанить в чатах и канале, затем зарегистрировать\n"
         "/reg @username - зарегистрировать\n"
         "/unreg @username - убрать регистрацию\n"
         "/ignore @username - не пересылать личные сообщения пользователя\n"
