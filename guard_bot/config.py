@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_path: str = Field(default="guard_bot.sqlite3", alias="DATABASE_PATH")
     challenge_timeout_seconds: int = Field(default=60, alias="CHALLENGE_TIMEOUT_SECONDS")
     challenge_phrase: str = Field(default="Мамой клянусь", alias="CHALLENGE_PHRASE")
+    challenge_easy: bool = Field(default=False, alias="CHALLENGE_EASY")
     unban_phrase: str = Field(default="Я не шлюхобот", alias="UNBAN_PHRASE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

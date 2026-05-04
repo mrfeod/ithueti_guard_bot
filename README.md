@@ -40,6 +40,7 @@ MODERATED_CHAT_IDS=-1001234567890
 DATABASE_PATH=/state/guard_bot.sqlite3
 CHALLENGE_TIMEOUT_SECONDS=60
 CHALLENGE_PHRASE=Мамой клянусь
+CHALLENGE_EASY=false
 UNBAN_PHRASE=Я не шлюхобот
 LOG_LEVEL=INFO
 ```
@@ -48,11 +49,12 @@ LOG_LEVEL=INFO
 
 - `BOT_TOKEN` - токен Telegram-бота из BotFather.
 - `ADMIN_SECRET` - фраза, которая включает админку в личке бота.
-- `REQUIRED_CHANNEL` - публичный канал, подписчики которого проходят регистрацию автоматически.
+- `REQUIRED_CHANNEL` - публичный канал, который бот показывает пользователю в подсказке.
 - `MODERATED_CHAT_IDS` - id модерируемых чатов через запятую.
 - `DATABASE_PATH` - путь к SQLite-базе внутри контейнера.
 - `CHALLENGE_TIMEOUT_SECONDS` - время на ответ challenge-фразой.
 - `CHALLENGE_PHRASE` - фраза для регистрации в чате.
+- `CHALLENGE_EASY` - если `true`, при активном challenge достаточно любого следующего сообщения пользователя.
 - `UNBAN_PHRASE` - фраза для разбана в личке.
 - `LOG_LEVEL` - уровень логов.
 

@@ -186,9 +186,9 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             ):
                 return
 
-        if text == settings.challenge_phrase:
-            challenges = await db.get_user_challenges(chat_id, user_id)
-            if challenges:
+        challenges = await db.get_user_challenges(chat_id, user_id)
+        if challenges:
+            if settings.challenge_easy or text == settings.challenge_phrase:
                 await moderation.register_by_challenge(
                     chat_id,
                     user_id,
@@ -196,6 +196,9 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
                     username=message.from_user.username,
                 )
                 return
+            return
+
+        if text == settings.challenge_phrase:
             if await moderation.is_registered(chat_id, user_id):
                 return
             await moderation.create_challenge(chat_id, user_id, message.message_id)
