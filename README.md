@@ -18,6 +18,7 @@ Telegram-бот для модерации чата комментариев ка
 - Админу доступны `/help`, `/status @username`, `/ban @username`, `/remove @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/ignore @username`, `/unignore @username`.
 - `/remove @username` банит пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`.
 - `/unban @username` разбанивает пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`, затем регистрирует его.
+- Админские команды можно писать с username или ответом на сообщение пользователя. Reply-режим работает в чате и в личке бота на пересланных админу сообщениях.
 - Пользователей из ignore-списка бот не пересылает админам в личке.
 
 ## .env

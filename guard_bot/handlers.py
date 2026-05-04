@@ -29,6 +29,18 @@ ADMIN_COMMANDS = [
     BotCommand(command="ignore", description="не пересылать сообщения"),
     BotCommand(command="unignore", description="снова пересылать сообщения"),
 ]
+ADMIN_COMMAND_NAMES = {
+    "help",
+    "commands",
+    "status",
+    "ban",
+    "remove",
+    "unban",
+    "reg",
+    "unreg",
+    "ignore",
+    "unignore",
+}
 
 
 class ChatIdLoggingMiddleware(BaseMiddleware):
@@ -120,11 +132,11 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             return
 
         if await db.is_admin(user.id):
-            if await handle_admin_reply_to_user(db, message):
-                return
-
             command_result = await handle_private_admin_command(db, moderation, message, text)
             if command_result:
+                return
+
+            if await handle_admin_reply_to_user(db, message):
                 return
 
         if is_private_status_command(text):
@@ -155,18 +167,8 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
         chat_id = message.chat.id
         text = message.text or ""
 
-        if text == "ban" and message.reply_to_message is not None and await db.is_admin(user_id):
-            target = message.reply_to_message.from_user
-            if target is not None:
-                await moderation.delete_known_user_messages(chat_id, target.id)
-                await moderation.delete_message(chat_id, message.reply_to_message.message_id)
-                await moderation.delete_message(chat_id, message.message_id)
-                await moderation.ban_user(
-                    chat_id,
-                    target.id,
-                    "admin_reply_ban",
-                    username=target.username,
-                )
+        if await db.is_admin(user_id):
+            if await handle_chat_admin_command(db, moderation, message, text):
                 return
 
         if text == settings.challenge_phrase:
@@ -217,26 +219,39 @@ async def handle_private_admin_command(
     message: Message,
     text: str,
 ) -> bool:
-    command, _, argument = text.partition(" ")
-    command = command.removeprefix("/").lower()
-    argument = argument.strip()
+    command, argument = parse_admin_command(text)
+    if command is None:
+        return False
+
     if command in {"help", "commands"}:
         await message.answer(admin_help_text())
         return True
 
-    if command not in {
-        "status",
-        "ban",
-        "remove",
-        "unban",
-        "reg",
-        "unreg",
-        "ignore",
-        "unignore",
-    }:
+    if command not in ADMIN_COMMAND_NAMES:
         return False
 
+    reply_target_user_id = None
+    reply_target_username = None
+    if message.from_user is not None and message.reply_to_message is not None:
+        reply_target_user_id = await db.get_admin_message_link_user_id(
+            admin_id=message.from_user.id,
+            admin_message_id=message.reply_to_message.message_id,
+        )
+        if reply_target_user_id is not None:
+            reply_target_username = await db.get_username(reply_target_user_id)
+
     if not is_username_query(argument):
+        if reply_target_user_id is not None:
+            await handle_admin_user_command(
+                db,
+                moderation,
+                message,
+                command,
+                reply_target_user_id,
+                reply_target_username,
+            )
+            return True
+
         await message.answer(
             (
                 "Нужно так: /status @username, /ban @username, /remove @username, "
@@ -265,52 +280,110 @@ async def handle_private_admin_command(
         await message.answer("неизвестен")
         return True
 
+    await handle_admin_user_command(
+        db,
+        moderation,
+        message,
+        command,
+        user_id,
+        argument.removeprefix("@"),
+    )
+    return True
+
+
+async def handle_admin_user_command(
+    db: Database,
+    moderation: ModerationService,
+    message: Message,
+    command: str,
+    user_id: int,
+    username: str | None = None,
+) -> None:
+    user_label = f"@{username}" if username else str(user_id)
+
+    if command == "status":
+        await message.answer(await db.get_status_by_user(user_id, username))
+        return
+
     if command == "ignore":
         await db.ignore_user(user_id)
-        logger.info("user ignored: user_id=%s username=%r", user_id, argument)
-        await moderation.notify_admins(f"игнорируется {argument}")
+        logger.info("user ignored: user_id=%s username=%r", user_id, username)
+        await moderation.notify_admins(f"игнорируется {user_label}")
         await message.answer("игнорируется")
-        return True
+        return
 
     if command == "unignore":
         unignored = await db.unignore_user(user_id)
         if unignored:
-            logger.info("user unignored: user_id=%s username=%r", user_id, argument)
-            await moderation.notify_admins(f"больше не игнорируется {argument}")
+            logger.info("user unignored: user_id=%s username=%r", user_id, username)
+            await moderation.notify_admins(f"больше не игнорируется {user_label}")
         await message.answer("больше не игнорируется" if unignored else "не игнорировался")
-        return True
+        return
 
     if command == "ban":
         banned = await moderation.ban_user_everywhere(
             user_id,
             "admin_private_ban",
-            username=argument.removeprefix("@"),
+            username=username,
         )
         await message.answer("забанен" if banned else "не смог забанить")
-        return True
+        return
 
     if command == "remove":
         removed = await moderation.remove_user_everywhere(
             user_id,
             "admin_private_remove",
-            username=argument.removeprefix("@"),
+            username=username,
         )
         await message.answer("удален" if removed else "не смог удалить")
-        return True
+        return
 
-    username = argument.removeprefix("@")
     if command == "unban":
         unbanned = await moderation.unban_user_everywhere_and_register(user_id, username)
         await message.answer("разбанен" if unbanned else "бот его не банил")
-        return True
+        return
 
     if command == "reg":
         await moderation.register_user(user_id, "admin_private_reg", username)
         await message.answer("зареган")
-        return True
+        return
 
     unregistered = await moderation.unregister_user(user_id, username)
     await message.answer("разреган" if unregistered else "не был зареган")
+
+
+async def handle_chat_admin_command(
+    db: Database,
+    moderation: ModerationService,
+    message: Message,
+    text: str,
+) -> bool:
+    command, _argument = parse_admin_command(text)
+    if command is None:
+        return False
+    if command in {"help", "commands"}:
+        await message.answer(admin_help_text())
+        return True
+    if command not in ADMIN_COMMAND_NAMES:
+        return False
+    if message.reply_to_message is None or message.reply_to_message.from_user is None:
+        return False
+
+    target = message.reply_to_message.from_user
+    await handle_admin_user_command(
+        db,
+        moderation,
+        message,
+        command,
+        target.id,
+        target.username,
+    )
+
+    if command in {"ban", "remove"}:
+        await moderation.delete_known_user_messages(message.chat.id, target.id)
+        await moderation.delete_message(message.chat.id, message.reply_to_message.message_id)
+        await moderation.delete_message(message.chat.id, message.message_id)
+
     return True
 
 
@@ -325,8 +398,17 @@ def admin_help_text() -> str:
         "/reg @username - зарегистрировать\n"
         "/unreg @username - убрать регистрацию\n"
         "/ignore @username - не пересылать личные сообщения пользователя\n"
-        "/unignore @username - снова пересылать личные сообщения пользователя"
+        "/unignore @username - снова пересылать личные сообщения пользователя\n"
+        "Эти же команды можно писать ответом на сообщение пользователя без @username."
     )
+
+
+def parse_admin_command(text: str) -> tuple[str | None, str]:
+    command, _, argument = text.partition(" ")
+    command = command.removeprefix("/").split("@", 1)[0].lower()
+    if command not in ADMIN_COMMAND_NAMES:
+        return None, ""
+    return command, argument.strip()
 
 
 def is_username_query(text: str) -> bool:
