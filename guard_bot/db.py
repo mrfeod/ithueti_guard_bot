@@ -220,6 +220,24 @@ class Database:
         await self.conn.commit()
         return int(cursor.lastrowid)
 
+    async def add_challenge_original_message(
+        self,
+        chat_id: int,
+        user_id: int,
+        original_message_id: int,
+        challenge_message_id: int,
+    ) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO pending_challenges (
+                chat_id, user_id, original_message_id, challenge_message_id
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (chat_id, user_id, original_message_id, challenge_message_id),
+        )
+        await self.conn.commit()
+
     async def get_challenge(self, challenge_id: int) -> aiosqlite.Row | None:
         cursor = await self.conn.execute(
             "SELECT * FROM pending_challenges WHERE id = ?",

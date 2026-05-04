@@ -121,6 +121,17 @@ class ModerationService:
         return was_registered
 
     async def create_challenge(self, chat_id: int, user_id: int, original_message_id: int) -> int:
+        existing_challenges = await self.db.get_user_challenges(chat_id, user_id)
+        if existing_challenges:
+            first_challenge = existing_challenges[0]
+            await self.db.add_challenge_original_message(
+                chat_id=chat_id,
+                user_id=user_id,
+                original_message_id=original_message_id,
+                challenge_message_id=int(first_challenge["challenge_message_id"]),
+            )
+            return int(first_challenge["id"])
+
         escaped_phrase = html.escape(self.settings.challenge_phrase)
         message = await self.bot.send_message(
             chat_id,
