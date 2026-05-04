@@ -85,6 +85,7 @@ class Database:
                 admin_id INTEGER NOT NULL,
                 admin_message_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
+                user_message_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (admin_id, admin_message_id)
             );
@@ -95,7 +96,17 @@ class Database:
             );
             """
         )
+        columns = await self.get_table_columns("admin_message_links")
+        if "user_message_id" not in columns:
+            await self.conn.execute(
+                "ALTER TABLE admin_message_links ADD COLUMN user_message_id INTEGER NOT NULL DEFAULT 0"
+            )
         await self.conn.commit()
+
+    async def get_table_columns(self, table_name: str) -> set[str]:
+        cursor = await self.conn.execute(f"PRAGMA table_info({table_name})")
+        rows = await cursor.fetchall()
+        return {str(row["name"]) for row in rows}
 
     async def upsert_seen_user(
         self,
@@ -388,16 +399,20 @@ class Database:
         admin_id: int,
         admin_message_id: int,
         user_id: int,
+        user_message_id: int,
     ) -> None:
         await self.conn.execute(
             """
-            INSERT INTO admin_message_links (admin_id, admin_message_id, user_id)
-            VALUES (?, ?, ?)
+            INSERT INTO admin_message_links (
+                admin_id, admin_message_id, user_id, user_message_id
+            )
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(admin_id, admin_message_id) DO UPDATE SET
                 user_id = excluded.user_id,
+                user_message_id = excluded.user_message_id,
                 created_at = CURRENT_TIMESTAMP
             """,
-            (admin_id, admin_message_id, user_id),
+            (admin_id, admin_message_id, user_id, user_message_id),
         )
         await self.conn.commit()
 
@@ -418,6 +433,21 @@ class Database:
         if row is None:
             return None
         return int(row["user_id"])
+
+    async def get_admin_message_link(
+        self,
+        admin_id: int,
+        admin_message_id: int,
+    ) -> aiosqlite.Row | None:
+        cursor = await self.conn.execute(
+            """
+            SELECT user_id, user_message_id
+            FROM admin_message_links
+            WHERE admin_id = ? AND admin_message_id = ?
+            """,
+            (admin_id, admin_message_id),
+        )
+        return await cursor.fetchone()
 
     async def ignore_user(self, user_id: int) -> None:
         await self.conn.execute(

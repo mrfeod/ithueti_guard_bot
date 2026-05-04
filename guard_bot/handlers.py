@@ -8,7 +8,7 @@ from aiogram import BaseMiddleware
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import CommandStart
-from aiogram.types import BotCommand, BotCommandScopeChat, Message, MessageId, MessageReactionUpdated, User
+from aiogram.types import BotCommand, BotCommandScopeChat, Message, MessageId, MessageReactionUpdated
 
 from guard_bot.config import Settings
 from guard_bot.db import Database
@@ -208,6 +208,10 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
     @router.message_reaction()
     async def moderated_chat_reaction(event: MessageReactionUpdated) -> None:
+        if event.chat.type == ChatType.PRIVATE:
+            if await handle_admin_reaction_to_user(db, moderation, event):
+                return
+
         if event.chat.id not in settings.moderated_chat_id_set:
             return
         if event.user is None:
@@ -543,25 +547,18 @@ async def notify_admins(db: Database, message: Message) -> None:
     sender = f"@{username}" if username else str(message.from_user.id)
     text = message.text or message.caption or "<non-text message>"
     notification = f"{sender}: {text}"
-    service_message = f"Сообщение от {user_contact_html(message.from_user)}"
 
     admin_ids = await db.get_admin_ids()
     for admin_id in admin_ids:
         if admin_id == message.from_user.id:
             continue
         try:
-            service = await message.bot.send_message(
-                admin_id,
-                service_message,
-                parse_mode="HTML",
-            )
-            await db.add_admin_message_link(admin_id, service.message_id, message.from_user.id)
-
             delivered = await forward_or_fallback(message, admin_id, notification)
             await db.add_admin_message_link(
                 admin_id,
                 delivered_message_id(delivered),
                 message.from_user.id,
+                message.message_id,
             )
         except Exception:
             logger.exception("failed to notify admin %s", admin_id)
@@ -603,6 +600,55 @@ async def handle_admin_reply_to_user(db: Database, message: Message) -> bool:
     return True
 
 
+async def handle_admin_reaction_to_user(
+    db: Database,
+    moderation: ModerationService,
+    event: MessageReactionUpdated,
+) -> bool:
+    if event.user is None:
+        return False
+    if not event.new_reaction:
+        return False
+    if not await db.is_admin(event.user.id):
+        return False
+
+    link = await db.get_admin_message_link(
+        admin_id=event.user.id,
+        admin_message_id=event.message_id,
+    )
+    if link is None:
+        return False
+
+    user_message_id = int(link["user_message_id"])
+    if not user_message_id:
+        await moderation.bot.send_message(event.chat.id, "Не смог ответить.")
+        return True
+
+    try:
+        await moderation.bot.set_message_reaction(
+            chat_id=int(link["user_id"]),
+            message_id=user_message_id,
+            reaction=event.new_reaction,
+        )
+    except Exception:
+        logger.exception(
+            "failed to set reaction for user %s message %s",
+            int(link["user_id"]),
+            user_message_id,
+        )
+        await moderation.bot.send_message(event.chat.id, "Не смог ответить.")
+        return True
+
+    logger.info(
+        "admin reaction sent: admin_id=%s user_id=%s message_id=%s",
+        event.user.id,
+        int(link["user_id"]),
+        user_message_id,
+    )
+    await moderation.bot.send_message(event.chat.id, "Ответил.")
+    return True
+
+
 async def set_admin_commands(message: Message) -> None:
     await message.bot.set_my_commands(
         ADMIN_COMMANDS,
@@ -616,14 +662,6 @@ def is_private_status_command(text: str) -> bool:
 
 def is_unban_phrase(text: str, unban_phrase: str) -> bool:
     return text.strip().casefold() == unban_phrase.casefold()
-
-
-def user_contact_html(user: User) -> str:
-    name_parts = [user.first_name, user.last_name]
-    name = " ".join(part for part in name_parts if part) or user.username or str(user.id)
-    username = f" (@{user.username})" if user.username else ""
-    escaped_label = html.escape(f"{name}{username}")
-    return f'<a href="tg://user?id={user.id}">{escaped_label}</a>'
 
 
 async def forward_or_fallback(message: Message, admin_id: int, fallback: str) -> Message | MessageId:
