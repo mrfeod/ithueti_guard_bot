@@ -164,7 +164,11 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
     @router.message(F.chat.id.in_(settings.moderated_chat_id_set))
     async def moderated_chat_message(message: Message) -> None:
-        if message.sender_chat is not None or message.is_automatic_forward:
+        if message.sender_chat is not None:
+            if is_required_sender_chat(message.sender_chat.username, settings.required_channel):
+                return
+            if message.sender_chat.type == ChatType.CHANNEL:
+                await handle_sender_chat_message(db, moderation, settings, message)
             return
 
         if message.from_user is None:
@@ -233,6 +237,45 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
         )
 
     return router
+
+
+async def handle_sender_chat_message(
+    db: Database,
+    moderation: ModerationService,
+    settings: Settings,
+    message: Message,
+) -> None:
+    if message.sender_chat is None:
+        return
+
+    sender_chat_id = message.sender_chat.id
+    chat_id = message.chat.id
+    text = message.text or ""
+    username = message.sender_chat.username
+
+    challenges = await db.get_user_challenges(chat_id, sender_chat_id)
+    if challenges:
+        if settings.challenge_easy or text == settings.challenge_phrase:
+            await moderation.register_by_challenge(
+                chat_id,
+                sender_chat_id,
+                message.message_id,
+                username=username,
+            )
+            return
+        await moderation.create_challenge(chat_id, sender_chat_id, message.message_id)
+        return
+
+    if text == settings.challenge_phrase:
+        if await db.is_registered(sender_chat_id):
+            return
+        await moderation.create_challenge(chat_id, sender_chat_id, message.message_id)
+        return
+
+    if await db.is_registered(sender_chat_id):
+        return
+
+    await moderation.create_challenge(chat_id, sender_chat_id, message.message_id)
 
 
 async def handle_private_admin_command(
@@ -482,10 +525,10 @@ async def handle_chat_admin_command(
                 return True
             await moderation.delete_message(message.chat.id, message.message_id)
             return True
-    elif message.reply_to_message is not None and message.reply_to_message.from_user is not None:
-        target = message.reply_to_message.from_user
-        target_user_id = target.id
-        target_username = target.username
+    elif message.reply_to_message is not None:
+        target_user_id, target_username = reply_target_identity(message.reply_to_message)
+        if target_user_id is None:
+            return False
     else:
         return False
 
@@ -556,6 +599,22 @@ def parse_admin_command(text: str) -> tuple[str | None, str]:
 def is_username_query(text: str) -> bool:
     username = text.removeprefix("@")
     return bool(username) and len(username) <= 32 and username.replace("_", "").isalnum()
+
+
+def is_required_sender_chat(sender_username: str | None, required_channel: str) -> bool:
+    if sender_username is None:
+        return False
+    return sender_username.lower() == required_channel.removeprefix("@").lower()
+
+
+def reply_target_identity(message: Message) -> tuple[int | None, str | None]:
+    if message.sender_chat is not None and message.sender_chat.type == ChatType.CHANNEL:
+        return message.sender_chat.id, message.sender_chat.username
+
+    if message.from_user is not None:
+        return message.from_user.id, message.from_user.username
+
+    return None, None
 
 
 async def notify_admins(db: Database, message: Message) -> None:

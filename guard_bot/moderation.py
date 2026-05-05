@@ -179,7 +179,10 @@ class ModerationService:
         username: str | None = None,
     ) -> None:
         try:
-            await self.bot.ban_chat_member(chat_id, user_id)
+            if user_id < 0:
+                await self.bot.ban_chat_sender_chat(chat_id, user_id)
+            else:
+                await self.bot.ban_chat_member(chat_id, user_id)
             await self.db.mark_banned(user_id, chat_id, reason)
             logger.info(
                 "user banned: user_id=%s chat_id=%s reason=%s",
@@ -220,7 +223,10 @@ class ModerationService:
 
     async def ban_user_in_chat(self, chat_id: int, user_id: int, reason: str) -> bool:
         try:
-            await self.bot.ban_chat_member(chat_id, user_id)
+            if user_id < 0:
+                await self.bot.ban_chat_sender_chat(chat_id, user_id)
+            else:
+                await self.bot.ban_chat_member(chat_id, user_id)
             await self.db.mark_banned(user_id, chat_id, reason)
             logger.info(
                 "user banned: user_id=%s chat_id=%s reason=%s",
@@ -234,6 +240,9 @@ class ModerationService:
             return False
 
     async def ban_user_in_required_channel(self, user_id: int, reason: str) -> bool:
+        if user_id < 0:
+            return False
+
         try:
             await self.bot.ban_chat_member(self.settings.required_channel, user_id)
             logger.info(
@@ -329,7 +338,10 @@ class ModerationService:
 
     async def unban_user_in_chat(self, chat_id: int, user_id: int) -> bool:
         try:
-            await self.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+            if user_id < 0:
+                await self.bot.unban_chat_sender_chat(chat_id, user_id)
+            else:
+                await self.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
             await self.db.clear_user_ban(user_id, chat_id)
             logger.info("user unbanned: user_id=%s chat_id=%s", user_id, chat_id)
             return True
@@ -338,6 +350,9 @@ class ModerationService:
             return False
 
     async def unban_user_in_required_channel(self, user_id: int) -> bool:
+        if user_id < 0:
+            return False
+
         try:
             await self.bot.unban_chat_member(
                 self.settings.required_channel,
