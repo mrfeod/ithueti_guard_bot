@@ -1,11 +1,11 @@
 import asyncio
 import contextlib
-import html
 import logging
 
 from aiogram import Bot
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import FSInputFile
 
 from guard_bot.config import Settings
 from guard_bot.db import Database
@@ -74,12 +74,12 @@ class ModerationService:
         username: str | None = None,
     ) -> None:
         challenges = await self.db.get_user_challenges(chat_id, user_id)
-        await self.register_user(user_id, "challenge", username)
 
         for challenge in challenges:
             await self._delete_message(chat_id, int(challenge["challenge_message_id"]))
         await self._delete_message(chat_id, answer_message_id)
         await self.db.delete_user_challenges(chat_id, user_id)
+        await self.register_user(user_id, "challenge", username)
 
     async def register_user(
         self,
@@ -120,33 +120,35 @@ class ModerationService:
             await self.notify_admins(f"разреган @{self.db.normalize_username(username)}")
         return was_registered
 
-    async def create_challenge(self, chat_id: int, user_id: int, original_message_id: int) -> int:
+    async def create_challenge(
+        self,
+        chat_id: int,
+        user_id: int,
+        original_message_id: int | None,
+        reply_to_message_id: int | None = None,
+        delete_original: bool = True,
+    ) -> int:
         existing_challenges = await self.db.get_user_challenges(chat_id, user_id)
         if existing_challenges:
             first_challenge = existing_challenges[0]
-            await self.db.add_challenge_original_message(
-                chat_id=chat_id,
-                user_id=user_id,
-                original_message_id=original_message_id,
-                challenge_message_id=int(first_challenge["challenge_message_id"]),
-            )
+            if delete_original and original_message_id is not None:
+                await self.db.add_challenge_original_message(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    original_message_id=original_message_id,
+                    challenge_message_id=int(first_challenge["challenge_message_id"]),
+                )
             return int(first_challenge["id"])
 
-        escaped_phrase = html.escape(self.settings.challenge_phrase)
-        message = await self.bot.send_message(
+        message = await self.bot.send_photo(
             chat_id,
-            (
-                "А не бот-ли ты часом? Ответь мне сообщением - "
-                f"<code>{escaped_phrase}</code>, у тебя 1 минута. "
-                "Чтобы не попадать под проверку в следующий раз, подпишись на канал."
-            ),
-            reply_to_message_id=original_message_id,
-            parse_mode="HTML",
+            FSInputFile(self.settings.challenge_image_path),
+            reply_to_message_id=reply_to_message_id or original_message_id,
         )
         challenge_id = await self.db.add_challenge(
             chat_id=chat_id,
             user_id=user_id,
-            original_message_id=original_message_id,
+            original_message_id=original_message_id if delete_original and original_message_id else 0,
             challenge_message_id=message.message_id,
         )
         asyncio.create_task(self.expire_challenge(challenge_id))
@@ -166,7 +168,9 @@ class ModerationService:
 
         challenges = await self.db.get_user_challenges(chat_id, user_id)
         for pending_challenge in challenges:
-            await self._delete_message(chat_id, int(pending_challenge["original_message_id"]))
+            original_message_id = int(pending_challenge["original_message_id"])
+            if original_message_id:
+                await self._delete_message(chat_id, original_message_id)
             await self._delete_message(chat_id, int(pending_challenge["challenge_message_id"]))
         await self.ban_user(chat_id, user_id, "challenge_timeout")
         await self.db.delete_user_challenges(chat_id, user_id)
@@ -314,7 +318,7 @@ class ModerationService:
         await self.db.clear_user_bans(user_id)
         if unbanned:
             await self.notify_admins(f"разбанен {await self.get_user_label(user_id, username)}")
-            await self.register_user(user_id, "private_unban_phrase", username)
+            await self.register_user(user_id, "private_unban_message", username)
         return unbanned
 
     async def unban_user_everywhere_and_register(

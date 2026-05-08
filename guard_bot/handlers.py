@@ -117,8 +117,7 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
         await message.answer(
             (
                 f"Подпишись на {html.escape(settings.required_channel)} и проблем не будет. "
-                "Если тебя забанил бот напиши мне:\n"
-                f"<code>{html.escape(settings.unban_phrase)}</code>"
+                "Если тебя забанил бот, напиши мне любое сообщение."
             ),
             parse_mode="HTML",
         )
@@ -138,7 +137,8 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             await message.answer("Что, новый хозяин, надо?!")
             return
 
-        if await db.is_admin(user.id):
+        is_admin = await db.is_admin(user.id)
+        if is_admin:
             command_result = await handle_private_admin_command(db, moderation, message, text)
             if command_result:
                 return
@@ -150,20 +150,22 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             await message.answer(await db.get_status_by_user(user.id, user.username))
             return
 
-        if is_unban_phrase(text, settings.unban_phrase):
+        if not is_admin:
             unbanned = await moderation.unban_and_register(user.id, user.username)
             if unbanned:
                 await message.answer("Разбанил.")
-            else:
-                await message.answer("Ты не был забанен. Пока.")
-            await notify_admins(db, message)
-            return
+                await notify_admins(db, message)
+                return
 
         await notify_admins(db, message)
         await message.answer(random.choice(USER_REPLIES))
 
     @router.message(F.chat.id.in_(settings.moderated_chat_id_set))
     async def moderated_chat_message(message: Message) -> None:
+        if message.new_chat_members:
+            await handle_new_chat_members(db, moderation, message)
+            return
+
         if message.sender_chat is not None:
             if is_required_sender_chat(message.sender_chat.username, settings.required_channel):
                 return
@@ -192,20 +194,12 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
         challenges = await db.get_user_challenges(chat_id, user_id)
         if challenges:
-            if settings.challenge_easy or text == settings.challenge_phrase:
-                await moderation.register_by_challenge(
-                    chat_id,
-                    user_id,
-                    message.message_id,
-                    username=message.from_user.username,
-                )
-                return
-            return
-
-        if text == settings.challenge_phrase:
-            if await moderation.is_registered(chat_id, user_id):
-                return
-            await moderation.create_challenge(chat_id, user_id, message.message_id)
+            await moderation.register_by_challenge(
+                chat_id,
+                user_id,
+                message.message_id,
+                username=message.from_user.username,
+            )
             return
 
         if await moderation.is_registered(chat_id, user_id):
@@ -221,22 +215,50 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
         if event.chat.id not in settings.moderated_chat_id_set:
             return
-        if event.user is None:
-            return
         if not event.new_reaction:
             return
 
-        if await moderation.is_registered(event.chat.id, event.user.id):
+        if event.user is not None:
+            actor_id = event.user.id
+        elif event.actor_chat is not None:
+            if is_required_sender_chat(event.actor_chat.username, settings.required_channel):
+                return
+            actor_id = event.actor_chat.id
+        else:
             return
 
-        await moderation.ban_user(
+        if await moderation.is_registered(event.chat.id, actor_id):
+            return
+
+        await moderation.create_challenge(
             event.chat.id,
-            event.user.id,
-            "unregistered_reaction",
-            username=event.user.username,
+            actor_id,
+            original_message_id=None,
+            reply_to_message_id=event.message_id,
+            delete_original=False,
         )
 
     return router
+
+
+async def handle_new_chat_members(
+    db: Database,
+    moderation: ModerationService,
+    message: Message,
+) -> None:
+    if not message.new_chat_members:
+        return
+
+    for user in message.new_chat_members:
+        await db.upsert_seen_user(
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+        )
+        if await moderation.is_registered(message.chat.id, user.id):
+            continue
+        await moderation.create_challenge(message.chat.id, user.id, message.message_id)
 
 
 async def handle_sender_chat_message(
@@ -250,26 +272,16 @@ async def handle_sender_chat_message(
 
     sender_chat_id = message.sender_chat.id
     chat_id = message.chat.id
-    text = message.text or ""
     username = message.sender_chat.username
 
     challenges = await db.get_user_challenges(chat_id, sender_chat_id)
     if challenges:
-        if settings.challenge_easy or text == settings.challenge_phrase:
-            await moderation.register_by_challenge(
-                chat_id,
-                sender_chat_id,
-                message.message_id,
-                username=username,
-            )
-            return
-        await moderation.create_challenge(chat_id, sender_chat_id, message.message_id)
-        return
-
-    if text == settings.challenge_phrase:
-        if await db.is_registered(sender_chat_id):
-            return
-        await moderation.create_challenge(chat_id, sender_chat_id, message.message_id)
+        await moderation.register_by_challenge(
+            chat_id,
+            sender_chat_id,
+            message.message_id,
+            username=username,
+        )
         return
 
     if await db.is_registered(sender_chat_id):
@@ -744,10 +756,6 @@ async def set_admin_commands(message: Message) -> None:
 
 def is_private_status_command(text: str) -> bool:
     return text.partition(" ")[0].split("@", 1)[0].lower() == "/status"
-
-
-def is_unban_phrase(text: str, unban_phrase: str) -> bool:
-    return text.strip().casefold() == unban_phrase.casefold()
 
 
 async def forward_or_fallback(message: Message, admin_id: int, fallback: str) -> Message | MessageId:

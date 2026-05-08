@@ -11,9 +11,7 @@ class Settings(BaseSettings):
     moderated_chat_ids_raw: str = Field(default="", alias="MODERATED_CHAT_IDS")
     database_path: str = Field(default="guard_bot.sqlite3", alias="DATABASE_PATH")
     challenge_timeout_seconds: int = Field(default=60, alias="CHALLENGE_TIMEOUT_SECONDS")
-    challenge_phrase: str = Field(default="Мамой клянусь", alias="CHALLENGE_PHRASE")
-    challenge_easy: bool = Field(default=False, alias="CHALLENGE_EASY")
-    unban_phrase: str = Field(default="Я не шлюхобот", alias="UNBAN_PHRASE")
+    challenge_image_path: str = Field(default="/state/cptch.png", alias="CHALLENGE_IMAGE_PATH")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
