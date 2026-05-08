@@ -66,6 +66,9 @@ class ModerationService:
             return False
         return member.status in REGISTERED_STATUSES
 
+    async def is_channel_subscriber(self, user_id: int) -> bool:
+        return await self._is_channel_subscriber(user_id)
+
     async def register_by_challenge(
         self,
         chat_id: int,

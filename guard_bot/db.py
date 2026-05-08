@@ -283,6 +283,21 @@ class Database:
         )
         return await cursor.fetchall()
 
+    async def get_banned_users(self) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            """
+            SELECT
+                b.user_id,
+                s.username,
+                GROUP_CONCAT(b.chat_id || ':' || b.reason, ', ') AS bans
+            FROM banned_users b
+            LEFT JOIN seen_users s ON s.user_id = b.user_id
+            GROUP BY b.user_id, s.username
+            ORDER BY lower(s.username), b.user_id
+            """
+        )
+        return await cursor.fetchall()
+
     async def get_username(self, user_id: int) -> str | None:
         cursor = await self.conn.execute(
             "SELECT username FROM seen_users WHERE user_id = ?",
@@ -306,6 +321,16 @@ class Database:
         if row is None:
             return None
         return int(row["user_id"])
+
+    async def get_seen_users(self) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            """
+            SELECT user_id, username, first_name, last_name
+            FROM seen_users
+            ORDER BY lower(username), user_id
+            """
+        )
+        return await cursor.fetchall()
 
     async def clear_user_bans(self, user_id: int) -> None:
         await self.conn.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
@@ -493,6 +518,42 @@ class Database:
         )
         row = await cursor.fetchone()
         return row is not None
+
+    async def get_ignored_users(self) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            """
+            SELECT i.user_id, s.username
+            FROM ignored_users i
+            LEFT JOIN seen_users s ON s.user_id = i.user_id
+            ORDER BY lower(s.username), i.user_id
+            """
+        )
+        return await cursor.fetchall()
+
+    async def get_registered_entries(self) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            """
+            SELECT *
+            FROM (
+                SELECT
+                    r.user_id,
+                    COALESCE(s.username, '') AS username,
+                    r.source,
+                    'user' AS kind
+                FROM registered_users r
+                LEFT JOIN seen_users s ON s.user_id = r.user_id
+                UNION ALL
+                SELECT
+                    NULL AS user_id,
+                    username,
+                    source,
+                    'username' AS kind
+                FROM registered_usernames
+            )
+            ORDER BY lower(username), user_id
+            """
+        )
+        return await cursor.fetchall()
 
     async def get_status_by_username(self, username: str) -> str:
         normalized = self.normalize_username(username)

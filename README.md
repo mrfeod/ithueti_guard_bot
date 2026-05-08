@@ -17,10 +17,12 @@ Telegram-бот для модерации чата комментариев ка
 - Прочие личные сообщения и медиа пересылаются админам. Если Telegram запрещает пересылку, бот пробует скопировать сообщение, затем отправляет fallback вида `@username: текст` или `user_id: текст`.
 - Если админ ставит реакцию на пересланное сообщение в личке бота, бот ставит такую же реакцию на исходное сообщение пользователя и отвечает админу `Ответил.`.
 - Админка в личке включается фразой `ADMIN_SECRET`.
-- Админу доступны `/help`, `/status @username`, `/ban @username`, `/remove @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/mod @username`, `/demod @username`, `/modlist`, `/ignore @username`, `/unignore @username`.
+- Админу доступны `/help`, `/status @username`, `/ban @username`, `/remove @username`, `/unban @username`, `/reg @username`, `/unreg @username`, `/mod @username`, `/demod @username`, `/modlist`, `/ignorelist`, `/banlist`, `/reglist`, `/sublist`, `/ignore @username`, `/unignore @username`.
 - `/remove @username` банит пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`.
 - `/unban @username` разбанивает пользователя в модерируемых чатах и в `REQUIRED_CHANNEL`, затем регистрирует его.
 - `/mod @username` выдаёт пользователю права модератора, `/demod @username` снимает их, `/modlist` показывает список.
+- `/ignorelist`, `/banlist`, `/reglist` показывают соответствующие списки, `/sublist` показывает известных боту подписчиков `REQUIRED_CHANNEL`.
+- Если админ нажал в меню команду, которой нужен username, бот попросит прислать `@username` следующим сообщением.
 - `/reg @username` и `/mod @username` можно применять к пользователям, которых бот ещё не видел.
 - Модератор не видит админское меню, но может в модерируемом чате использовать `ban`, `remove` и `unban`.
 - Админские команды можно писать с username или ответом на сообщение пользователя. Reply-режим работает в чате и в личке бота на пересланных админу сообщениях.
