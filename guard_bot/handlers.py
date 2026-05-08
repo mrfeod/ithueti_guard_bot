@@ -236,7 +236,7 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
 
         challenges = await db.get_user_challenges(chat_id, user_id)
         if is_reply_to_this_bot(message):
-            if challenges:
+            if is_reply_to_challenge(message, challenges):
                 await moderation.register_by_challenge(
                     chat_id,
                     user_id,
@@ -314,13 +314,17 @@ async def handle_sender_chat_message(
     username = message.sender_chat.username
 
     challenges = await db.get_user_challenges(chat_id, sender_chat_id)
-    if challenges:
+    if is_reply_to_challenge(message, challenges):
         await moderation.register_by_challenge(
             chat_id,
             sender_chat_id,
             message.message_id,
             username=username,
         )
+        return
+
+    if is_reply_to_this_bot(message):
+        await moderation.delete_message(chat_id, message.message_id)
         return
 
     if await db.is_registered(sender_chat_id):
@@ -883,6 +887,13 @@ def is_reply_to_this_bot(message: Message) -> bool:
     if reply is None or reply.from_user is None:
         return False
     return reply.from_user.id == message.bot.id
+
+
+def is_reply_to_challenge(message: Message, challenges: list[Any]) -> bool:
+    reply = message.reply_to_message
+    if reply is None:
+        return False
+    return any(reply.message_id == int(challenge["challenge_message_id"]) for challenge in challenges)
 
 
 async def notify_admins(db: Database, message: Message) -> None:
