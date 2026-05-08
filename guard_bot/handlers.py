@@ -71,6 +71,7 @@ ADMIN_USER_ARGUMENT_COMMAND_NAMES = {
 }
 ADMIN_LIST_COMMAND_NAMES = {"modlist", "ignorelist", "banlist", "reglist", "sublist"}
 ADMIN_PENDING_COMMANDS: dict[int, str] = {}
+DEFAULT_LIST_LIMIT = 10
 
 
 class ChatIdLoggingMiddleware(BaseMiddleware):
@@ -349,7 +350,11 @@ async def handle_private_admin_command(
     if command in ADMIN_LIST_COMMAND_NAMES:
         if admin_id is not None:
             ADMIN_PENDING_COMMANDS.pop(admin_id, None)
-        await answer_long(message, await admin_list_text(db, moderation, command))
+        limit = parse_list_limit(argument)
+        if limit is None:
+            await message.answer("укажи целое число больше 0")
+            return True
+        await answer_long(message, await admin_list_text(db, moderation, command, limit))
         return True
 
     if command not in ADMIN_COMMAND_NAMES:
@@ -646,11 +651,11 @@ def admin_help_text() -> str:
         "/unreg @username - убрать регистрацию\n"
         "/mod @username - дать права модератора\n"
         "/demod @username - забрать права модератора\n"
-        "/modlist - список модераторов\n"
-        "/ignorelist - список игнорируемых\n"
-        "/banlist - список забаненных\n"
-        "/reglist - список зарегистрированных\n"
-        "/sublist - список известных подписчиков канала\n"
+        "/modlist [число] - список модераторов\n"
+        "/ignorelist [число] - список игнорируемых\n"
+        "/banlist [число] - список забаненных\n"
+        "/reglist [число] - список зарегистрированных\n"
+        "/sublist [число] - список известных подписчиков канала\n"
         "/ignore @username - не пересылать личные сообщения пользователя\n"
         "/unignore @username - снова пересылать личные сообщения пользователя\n"
         "Эти же команды можно писать ответом на сообщение пользователя или канала без аргумента."
@@ -665,20 +670,21 @@ async def admin_list_text(
     db: Database,
     moderation: ModerationService,
     command: str,
+    limit: int,
 ) -> str:
     if command == "modlist":
-        return await modlist_text(db)
+        return await modlist_text(db, limit)
     if command == "ignorelist":
-        return await ignorelist_text(db)
+        return await ignorelist_text(db, limit)
     if command == "banlist":
-        return await banlist_text(db)
+        return await banlist_text(db, limit)
     if command == "reglist":
-        return await reglist_text(db)
-    return await sublist_text(db, moderation)
+        return await reglist_text(db, limit)
+    return await sublist_text(db, moderation, limit)
 
 
-async def modlist_text(db: Database) -> str:
-    moderators = await db.get_moderators()
+async def modlist_text(db: Database, limit: int) -> str:
+    moderators = await db.get_moderators(limit)
     if not moderators:
         return "модераторов нет"
 
@@ -692,8 +698,8 @@ async def modlist_text(db: Database) -> str:
     return "\n".join(lines)
 
 
-async def ignorelist_text(db: Database) -> str:
-    ignored_users = await db.get_ignored_users()
+async def ignorelist_text(db: Database, limit: int) -> str:
+    ignored_users = await db.get_ignored_users(limit)
     if not ignored_users:
         return "ignore-список пуст"
 
@@ -703,8 +709,8 @@ async def ignorelist_text(db: Database) -> str:
     return "\n".join(lines)
 
 
-async def banlist_text(db: Database) -> str:
-    banned_users = await db.get_banned_users()
+async def banlist_text(db: Database, limit: int) -> str:
+    banned_users = await db.get_banned_users(limit)
     if not banned_users:
         return "банлист пуст"
 
@@ -716,8 +722,8 @@ async def banlist_text(db: Database) -> str:
     return "\n".join(lines)
 
 
-async def reglist_text(db: Database) -> str:
-    registered_entries = await db.get_registered_entries()
+async def reglist_text(db: Database, limit: int) -> str:
+    registered_entries = await db.get_registered_entries(limit)
     if not registered_entries:
         return "регистраций нет"
 
@@ -732,7 +738,7 @@ async def reglist_text(db: Database) -> str:
     return "\n".join(lines)
 
 
-async def sublist_text(db: Database, moderation: ModerationService) -> str:
+async def sublist_text(db: Database, moderation: ModerationService, limit: int) -> str:
     seen_users = await db.get_seen_users()
     subscribers = []
     for user in seen_users:
@@ -741,6 +747,8 @@ async def sublist_text(db: Database, moderation: ModerationService) -> str:
             continue
         if await moderation.is_channel_subscriber(user_id):
             subscribers.append(user_label(user_id, user["username"]))
+        if len(subscribers) >= limit:
+            break
 
     if not subscribers:
         return "известных подписчиков нет"
@@ -789,6 +797,15 @@ def parse_admin_command(text: str) -> tuple[str | None, str]:
     if command not in ADMIN_COMMAND_NAMES:
         return None, ""
     return command, argument.strip()
+
+
+def parse_list_limit(argument: str) -> int | None:
+    if not argument:
+        return DEFAULT_LIST_LIMIT
+    if not argument.isdecimal():
+        return None
+    limit = int(argument)
+    return limit if limit > 0 else None
 
 
 async def resolve_username_target(

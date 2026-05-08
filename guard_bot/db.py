@@ -297,19 +297,22 @@ class Database:
         )
         return await cursor.fetchall()
 
-    async def get_banned_users(self) -> list[aiosqlite.Row]:
+    async def get_banned_users(self, limit: int | None = None) -> list[aiosqlite.Row]:
         cursor = await self.conn.execute(
             """
             SELECT
                 b.user_id,
                 s.username,
                 s.first_name,
-                GROUP_CONCAT(b.chat_id || ':' || b.reason, ', ') AS bans
+                GROUP_CONCAT(b.chat_id || ':' || b.reason, ', ') AS bans,
+                MAX(b.banned_at) AS latest_banned_at
             FROM banned_users b
             LEFT JOIN seen_users s ON s.user_id = b.user_id
             GROUP BY b.user_id, s.username, s.first_name
-            ORDER BY lower(s.username), b.user_id
-            """
+            ORDER BY latest_banned_at DESC, lower(s.username), b.user_id
+            LIMIT COALESCE(?, -1)
+            """,
+            (limit,),
         )
         return await cursor.fetchall()
 
@@ -360,7 +363,7 @@ class Database:
             """
             SELECT user_id, username, first_name, last_name
             FROM seen_users
-            ORDER BY lower(username), user_id
+            ORDER BY updated_at DESC, lower(username), user_id
             """
         )
         return await cursor.fetchall()
@@ -450,23 +453,30 @@ class Database:
         row = await cursor.fetchone()
         return row is not None
 
-    async def get_moderators(self) -> list[aiosqlite.Row]:
+    async def get_moderators(self, limit: int | None = None) -> list[aiosqlite.Row]:
         cursor = await self.conn.execute(
             """
-            SELECT
-                m.user_id,
-                COALESCE(s.username, m.username) AS username,
-                'user' AS source
-            FROM bot_moderators m
-            LEFT JOIN seen_users s ON s.user_id = m.user_id
-            UNION ALL
-            SELECT
-                NULL AS user_id,
-                username,
-                'username' AS source
-            FROM bot_moderator_usernames
-            ORDER BY username COLLATE NOCASE, user_id
-            """
+            SELECT *
+            FROM (
+                SELECT
+                    m.user_id,
+                    COALESCE(s.username, m.username) AS username,
+                    'user' AS source,
+                    m.added_at
+                FROM bot_moderators m
+                LEFT JOIN seen_users s ON s.user_id = m.user_id
+                UNION ALL
+                SELECT
+                    NULL AS user_id,
+                    username,
+                    'username' AS source,
+                    added_at
+                FROM bot_moderator_usernames
+            )
+            ORDER BY added_at DESC, username COLLATE NOCASE, user_id
+            LIMIT COALESCE(?, -1)
+            """,
+            (limit,),
         )
         return await cursor.fetchall()
 
@@ -552,18 +562,20 @@ class Database:
         row = await cursor.fetchone()
         return row is not None
 
-    async def get_ignored_users(self) -> list[aiosqlite.Row]:
+    async def get_ignored_users(self, limit: int | None = None) -> list[aiosqlite.Row]:
         cursor = await self.conn.execute(
             """
             SELECT i.user_id, s.username
             FROM ignored_users i
             LEFT JOIN seen_users s ON s.user_id = i.user_id
-            ORDER BY lower(s.username), i.user_id
-            """
+            ORDER BY i.ignored_at DESC, lower(s.username), i.user_id
+            LIMIT COALESCE(?, -1)
+            """,
+            (limit,),
         )
         return await cursor.fetchall()
 
-    async def get_registered_entries(self) -> list[aiosqlite.Row]:
+    async def get_registered_entries(self, limit: int | None = None) -> list[aiosqlite.Row]:
         cursor = await self.conn.execute(
             """
             SELECT *
@@ -573,7 +585,8 @@ class Database:
                     COALESCE(s.username, '') AS username,
                     COALESCE(s.first_name, '') AS first_name,
                     r.source,
-                    'user' AS kind
+                    'user' AS kind,
+                    r.registered_at
                 FROM registered_users r
                 LEFT JOIN seen_users s ON s.user_id = r.user_id
                 UNION ALL
@@ -582,11 +595,14 @@ class Database:
                     username,
                     '' AS first_name,
                     source,
-                    'username' AS kind
+                    'username' AS kind,
+                    registered_at
                 FROM registered_usernames
             )
-            ORDER BY lower(username), user_id
-            """
+            ORDER BY registered_at DESC, lower(username), user_id
+            LIMIT COALESCE(?, -1)
+            """,
+            (limit,),
         )
         return await cursor.fetchall()
 
