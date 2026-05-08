@@ -299,8 +299,9 @@ class ModerationService:
                 logger.exception("failed to notify admin %s", admin_id)
 
     async def get_user_label(self, user_id: int, username: str | None = None) -> str:
-        username = username or await self.db.get_username(user_id)
-        return f"@{username}" if username else str(user_id)
+        if username:
+            return f"@{username}"
+        return await self.db.get_display_name(user_id) or str(user_id)
 
     async def unban_and_register(self, user_id: int, username: str | None = None) -> int:
         known_bans = await self.db.get_user_bans(user_id)
@@ -311,7 +312,10 @@ class ModerationService:
         unbanned = 0
         for chat_id in chat_ids:
             try:
-                await self.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+                if user_id < 0:
+                    await self.bot.unban_chat_sender_chat(chat_id, user_id)
+                else:
+                    await self.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
                 await self.db.clear_user_ban(user_id, chat_id)
                 logger.info("user unbanned: user_id=%s chat_id=%s", user_id, chat_id)
                 unbanned += 1

@@ -129,6 +129,20 @@ class Database:
         )
         await self.conn.commit()
 
+    async def upsert_seen_chat(
+        self,
+        chat_id: int,
+        username: str | None,
+        title: str | None,
+        chat_type: str | None,
+    ) -> None:
+        await self.upsert_seen_user(
+            user_id=chat_id,
+            username=username,
+            first_name=title,
+            last_name=chat_type,
+        )
+
     async def is_registered(self, user_id: int) -> bool:
         cursor = await self.conn.execute(
             "SELECT 1 FROM registered_users WHERE user_id = ?",
@@ -289,10 +303,11 @@ class Database:
             SELECT
                 b.user_id,
                 s.username,
+                s.first_name,
                 GROUP_CONCAT(b.chat_id || ':' || b.reason, ', ') AS bans
             FROM banned_users b
             LEFT JOIN seen_users s ON s.user_id = b.user_id
-            GROUP BY b.user_id, s.username
+            GROUP BY b.user_id, s.username, s.first_name
             ORDER BY lower(s.username), b.user_id
             """
         )
@@ -307,6 +322,24 @@ class Database:
         if row is None:
             return None
         return row["username"]
+
+    async def get_display_name(self, user_id: int) -> str | None:
+        cursor = await self.conn.execute(
+            """
+            SELECT username, first_name
+            FROM seen_users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        if row["username"]:
+            return f"@{row['username']}"
+        if row["first_name"]:
+            return str(row["first_name"])
+        return None
 
     async def get_user_id_by_username(self, username: str) -> int | None:
         normalized = self.normalize_username(username)
@@ -538,6 +571,7 @@ class Database:
                 SELECT
                     r.user_id,
                     COALESCE(s.username, '') AS username,
+                    COALESCE(s.first_name, '') AS first_name,
                     r.source,
                     'user' AS kind
                 FROM registered_users r
@@ -546,6 +580,7 @@ class Database:
                 SELECT
                     NULL AS user_id,
                     username,
+                    '' AS first_name,
                     source,
                     'username' AS kind
                 FROM registered_usernames

@@ -7,6 +7,7 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram import F, Router
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import CommandStart
 from aiogram.types import BotCommand, BotCommandScopeChat, Message, MessageId, MessageReactionUpdated
 
@@ -102,13 +103,24 @@ class ChatIdLoggingMiddleware(BaseMiddleware):
                     first_name=event.from_user.first_name,
                     last_name=event.from_user.last_name,
                 )
+            if event.sender_chat is not None:
+                await self.db.upsert_seen_chat(
+                    chat_id=event.sender_chat.id,
+                    username=event.sender_chat.username,
+                    title=event.sender_chat.title,
+                    chat_type=event.sender_chat.type,
+                )
         elif isinstance(event, MessageReactionUpdated):
             logger.info(
-                "reaction update: chat_id=%s chat_type=%s chat_title=%r user_id=%s",
+                (
+                    "reaction update: chat_id=%s chat_type=%s chat_title=%r "
+                    "user_id=%s actor_chat_id=%s"
+                ),
                 event.chat.id,
                 event.chat.type,
                 event.chat.title,
                 event.user.id if event.user else None,
+                event.actor_chat.id if event.actor_chat else None,
             )
             if event.user is not None:
                 await self.db.upsert_seen_user(
@@ -116,6 +128,13 @@ class ChatIdLoggingMiddleware(BaseMiddleware):
                     username=event.user.username,
                     first_name=event.user.first_name,
                     last_name=event.user.last_name,
+                )
+            if event.actor_chat is not None:
+                await self.db.upsert_seen_chat(
+                    chat_id=event.actor_chat.id,
+                    username=event.actor_chat.username,
+                    title=event.actor_chat.title,
+                    chat_type=event.actor_chat.type,
                 )
 
         return await handler(event, data)
@@ -352,7 +371,8 @@ async def handle_private_admin_command(
         if reply_target_user_id is not None:
             reply_target_username = await db.get_username(reply_target_user_id)
 
-    if not is_username_query(argument):
+    target_user_id = parse_user_id_query(argument)
+    if target_user_id is None and not is_username_query(argument):
         if reply_target_user_id is not None:
             if admin_id is not None:
                 ADMIN_PENDING_COMMANDS.pop(admin_id, None)
@@ -377,11 +397,27 @@ async def handle_private_admin_command(
     if admin_id is not None:
         ADMIN_PENDING_COMMANDS.pop(admin_id, None)
 
-    if command == "status":
-        await message.answer(await db.get_status_by_username(argument))
+    if target_user_id is not None:
+        target_username = await db.get_username(target_user_id)
+        await handle_admin_user_command(
+            db,
+            moderation,
+            message,
+            command,
+            target_user_id,
+            target_username,
+        )
         return True
 
-    user_id = await db.get_user_id_by_username(argument)
+    if command == "status":
+        user_id = await resolve_username_target(db, message, argument)
+        if user_id is not None:
+            await message.answer(await db.get_status_by_user(user_id, argument.removeprefix("@")))
+        else:
+            await message.answer(await db.get_status_by_username(argument))
+        return True
+
+    user_id = await resolve_username_target(db, message, argument)
     if user_id is None:
         if await handle_unknown_username_admin_command(db, moderation, message, command, argument):
             return True
@@ -453,7 +489,7 @@ async def handle_admin_user_command(
     *,
     silent: bool = False,
 ) -> None:
-    user_label = f"@{username}" if username else str(user_id)
+    user_label = f"@{username}" if username else await moderation.get_user_label(user_id)
 
     if command == "status":
         if not silent:
@@ -556,8 +592,11 @@ async def handle_chat_admin_command(
     target_user_id = None
     target_username = None
     command, argument = parse_admin_command(text)
-    if is_username_query(argument):
-        target_user_id = await db.get_user_id_by_username(argument)
+    target_user_id = parse_user_id_query(argument)
+    if target_user_id is not None:
+        target_username = await db.get_username(target_user_id)
+    elif is_username_query(argument):
+        target_user_id = await resolve_username_target(db, message, argument)
         target_username = argument.removeprefix("@")
         if target_user_id is None:
             if await handle_unknown_username_admin_command(
@@ -620,7 +659,7 @@ def admin_help_text() -> str:
         "/sublist - список известных подписчиков канала\n"
         "/ignore @username - не пересылать личные сообщения пользователя\n"
         "/unignore @username - снова пересылать личные сообщения пользователя\n"
-        "Эти же команды можно писать ответом на сообщение пользователя без @username."
+        "Эти же команды можно писать ответом на сообщение пользователя или канала без аргумента."
     )
 
 
@@ -677,7 +716,9 @@ async def banlist_text(db: Database) -> str:
 
     lines = ["Баны:"]
     for user in banned_users:
-        lines.append(f"{user_label(user['user_id'], user['username'])} - {user['bans']}")
+        lines.append(
+            f"{user_label(user['user_id'], user['username'], user['first_name'])} - {user['bans']}"
+        )
     return "\n".join(lines)
 
 
@@ -693,7 +734,7 @@ async def reglist_text(db: Database) -> str:
         if user_id is None:
             lines.append(f"@{username}")
         else:
-            lines.append(user_label(user_id, username))
+            lines.append(user_label(user_id, username, entry["first_name"]))
     return "\n".join(lines)
 
 
@@ -702,6 +743,8 @@ async def sublist_text(db: Database, moderation: ModerationService) -> str:
     subscribers = []
     for user in seen_users:
         user_id = int(user["user_id"])
+        if user_id < 0:
+            continue
         if await moderation.is_channel_subscriber(user_id):
             subscribers.append(user_label(user_id, user["username"]))
 
@@ -711,9 +754,11 @@ async def sublist_text(db: Database, moderation: ModerationService) -> str:
     return "Известные подписчики канала:\n" + "\n".join(subscribers)
 
 
-def user_label(user_id: int | None, username: str | None) -> str:
+def user_label(user_id: int | None, username: str | None, first_name: str | None = None) -> str:
     if username:
         return f"@{username}"
+    if user_id is not None and first_name:
+        return first_name
     return str(user_id)
 
 
@@ -752,9 +797,55 @@ def parse_admin_command(text: str) -> tuple[str | None, str]:
     return command, argument.strip()
 
 
+async def resolve_username_target(
+    db: Database,
+    message: Message,
+    username: str,
+) -> int | None:
+    user_id = await db.get_user_id_by_username(username)
+    if user_id is not None:
+        return user_id
+
+    normalized = username if username.startswith("@") else f"@{username}"
+    try:
+        chat = await message.bot.get_chat(normalized)
+    except TelegramAPIError:
+        logger.info("failed to resolve username target: username=%r", username)
+        return None
+
+    if chat.type in {ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP}:
+        await db.upsert_seen_chat(
+            chat_id=chat.id,
+            username=chat.username,
+            title=chat.title,
+            chat_type=str(chat.type),
+        )
+        return chat.id
+
+    if chat.type == ChatType.PRIVATE:
+        await db.upsert_seen_user(
+            user_id=chat.id,
+            username=chat.username,
+            first_name=getattr(chat, "first_name", None),
+            last_name=getattr(chat, "last_name", None),
+        )
+        return chat.id
+
+    return None
+
+
 def is_username_query(text: str) -> bool:
     username = text.removeprefix("@")
     return bool(username) and len(username) <= 32 and username.replace("_", "").isalnum()
+
+
+def parse_user_id_query(text: str) -> int | None:
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def is_required_sender_chat(sender_username: str | None, required_channel: str) -> bool:
