@@ -271,13 +271,7 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
         if await moderation.is_registered(event.chat.id, actor_id):
             return
 
-        await moderation.create_challenge(
-            event.chat.id,
-            actor_id,
-            original_message_id=None,
-            reply_to_message_id=event.message_id,
-            delete_original=False,
-        )
+        await moderation.ban_user(event.chat.id, actor_id, "unregistered_reaction")
 
     return router
 
