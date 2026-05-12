@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Telegram moderation bot for chat and reaction spam protection"
 requires-python = ">=3.11"
 dependencies = [
-    "aiogram>=3.7,<4",
+    "aiogram>=3.28.2,<4",
     "aiosqlite>=0.19,<1",
     "pydantic-settings>=2.2,<3",
 ]
