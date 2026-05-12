@@ -276,7 +276,7 @@ def create_router(db: Database, moderation: ModerationService, settings: Setting
             return
 
         await moderation.ban_user(event.chat.id, actor_id, "unregistered_reaction")
-        await moderation.delete_message_reactions(event.chat.id, event.message_id)
+        await moderation.delete_user_reactions(event.chat.id, actor_id)
 
     return router
 
