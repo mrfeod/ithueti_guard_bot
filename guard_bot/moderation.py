@@ -394,6 +394,10 @@ class ModerationService:
     async def delete_message(self, chat_id: int, message_id: int) -> None:
         await self._delete_message(chat_id, message_id)
 
+    async def delete_message_reactions(self, chat_id: int, message_id: int) -> None:
+        with contextlib.suppress(TelegramAPIError):
+            await self.bot.delete_all_message_reactions(chat_id, message_id)
+
     async def _delete_message(self, chat_id: int, message_id: int) -> None:
         with contextlib.suppress(TelegramAPIError):
             await self.bot.delete_message(chat_id, message_id)
