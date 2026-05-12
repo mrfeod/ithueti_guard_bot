@@ -394,6 +394,15 @@ class ModerationService:
     async def delete_message(self, chat_id: int, message_id: int) -> None:
         await self._delete_message(chat_id, message_id)
 
+    async def delete_user_reactions(self, chat_id: int, actor_id: int) -> None:
+        try:
+            if actor_id < 0:
+                await self.bot.delete_all_message_reactions(chat_id, actor_chat_id=actor_id)
+            else:
+                await self.bot.delete_all_message_reactions(chat_id, user_id=actor_id)
+        except TelegramAPIError:
+            logger.exception("failed to delete reactions by actor %s in chat %s", actor_id, chat_id)
+
     async def _delete_message(self, chat_id: int, message_id: int) -> None:
         with contextlib.suppress(TelegramAPIError):
             await self.bot.delete_message(chat_id, message_id)
